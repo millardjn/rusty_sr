@@ -1,0 +1,11 @@
+[package]
+name = "rusty_sr"
+version = "0.0.1"
+authors = ["James Millard <millard.jn@gmail.com>"]
+
+[dependencies]
+rand = "0.3"
+clap = "2"
+image = "*"
+bytevec = "0.2.0"
+alumina = { path = "D:/Repositories/alumina" }
