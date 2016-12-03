@@ -32,7 +32,7 @@ impl Supplier for ImageFolderSupplier{
 		
 		if let Some(crop) = self.crop {
 			let (width, height, _) = crop;
-			let mut data = NodeData::new_blank(DataShape::new(CHANNELS, vec![width as usize, height as usize], n));
+			let mut data = NodeData::new_blank(DataShape::new(CHANNELS, &[width as usize, height as usize], n));
 			let data_len = data.values.len();
 
 
@@ -193,7 +193,7 @@ fn open_randomised_img(order: &mut ShuffleRandomiser, paths: &[PathBuf]) -> Dyna
 fn load_full(order: &mut ShuffleRandomiser, paths: &[PathBuf]) -> NodeData{
 	
 	let image = open_randomised_img(order, paths);
-	let mut node_data = NodeData::new_blank(DataShape::new(CHANNELS, vec![image.dimensions().0 as usize, image.dimensions().1 as usize], 1));
+	let mut node_data = NodeData::new_blank(DataShape::new(CHANNELS, &[image.dimensions().0 as usize, image.dimensions().1 as usize], 1));
 
 	img_to_data(&mut node_data.values, &image);
 
@@ -224,6 +224,7 @@ fn range(cropping: &Cropping, image_x: u32, data_x: u32) -> (u32, u32, u32) {
 }
 
 #[derive(Copy, Clone)]
+#[allow(unused)]
 pub enum Cropping {
 	Centre,
 	Random,

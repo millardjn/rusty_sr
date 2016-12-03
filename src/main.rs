@@ -4,7 +4,7 @@ extern crate alumina;
 extern crate clap;
 extern crate image;
 
-mod suppliers;
+//mod suppliers;
 mod network;
 
 
@@ -22,7 +22,8 @@ const IMAGENET_PARAMS: &'static [u8] = include_bytes!("res/imagenet.par");
 const ANIME_PARAMS: &'static [u8] = include_bytes!("res/anime.par");
 
 use network::*;
-use suppliers::*;
+use alumina::opt::supplier::*;
+use alumina::opt::supplier::imagefolder::*;
 use alumina::graph::*;
 use alumina::shape::*;
 use alumina::opt::asgd::Asgd2;
@@ -132,7 +133,7 @@ fn main() {
 		let mut out_file = File::create(app_m.value_of("OUTPUT_FILE").expect("No output file given?")).expect("Could not save output file");
 
 
-		let mut input = NodeData::new_blank(DataShape::new(CHANNELS, vec![input_image.dimensions().0 as usize, input_image.dimensions().1 as usize], 1));
+		let mut input = NodeData::new_blank(DataShape::new(CHANNELS, &[input_image.dimensions().0 as usize, input_image.dimensions().1 as usize], 1));
 
 		img_to_data(&mut input.values, &input_image);
 
@@ -151,7 +152,7 @@ fn train(matches: &ArgMatches){
 
 	let mut g = sr_net(3, true, 1e-5);
 
-	let mut training_set = ImageFolderSupplier::new(Path::new(matches.value_of("TRAINING_FOLDER").expect("No training folder?")), Some((120, 120, Cropping::Random)));
+	let mut training_set = ImageFolderSupplier::<ShuffleRandom>::new(Path::new(matches.value_of("TRAINING_FOLDER").expect("No training folder?")), Cropping::Random{width:120, height:120});
 
 	let start_params = if let Some(param_str) = matches.value_of("START_PARAMETERS") {
 		let mut param_file = File::open(Path::new(param_str)).expect("Error opening parameter file");
@@ -170,7 +171,7 @@ fn train(matches: &ArgMatches){
 
 	if let Some(val_str) = matches.value_of("VALIDATION_FOLDER"){ // Add occasional test set evaluation as solver callback
 		let mut g2 = sr_net(3, true, 0.0);
-		let mut validation_set = ImageFolderSupplier::new(Path::new(val_str), Some((120, 120, Cropping::Random)));
+		let mut validation_set = ImageFolderSupplier::<Sequential>::new(Path::new(val_str), Cropping::Random{width:120, height:120});
 
 		let n = if let Some(val_max) = matches.value_of("val_max"){
 			cmp::min(validation_set.epoch_size() as usize, val_max.parse::<usize>().expect("-val_max N must be a positive integer"))
