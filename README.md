@@ -10,13 +10,17 @@ Feel free to open an issue to raise any problems or for general discussion.
 
 ## Examples
 Set14 Butterfly
-![ButterflyLowRes](docs/butterfly_nn.png)![Butterfly](docs/butterfly_rs.png)
+
+![ButterflyLowRes](docs/butterfly_nn.png)
+![Butterfly](docs/butterfly_rs.png)
 
 Set14 Cartoon (Using anime preset)
+
 ![CartoonLowRes](docs/cartoon_nn.png)![Cartoon](docs/cartoon_rsa.png)
 
 Bank Lobby (test image for [Neural Enhance](https://github.com/alexjc/neural-enhance))
 CC-BY-SA @siv-athens
+
 ![BankLowRes](docs/bank_nn.png)
 ![Bank](docs/bank_rs.png)
 
