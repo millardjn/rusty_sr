@@ -8,7 +8,7 @@ mod network;
 
 use std::fs::*;
 use std::path::Path;
-use std::io::{Write, Read};
+use std::io::{stdout, Write, Read};
 
 use std::cmp;
 
@@ -28,6 +28,7 @@ use alumina::shape::*;
 use alumina::opt::cain::Cain;
 use alumina::opt::*;
 
+// TODO: expose upscaling factor as argument.
 const FACTOR: usize = 3;
 
 fn main() {
@@ -156,7 +157,8 @@ fn upscale(app_m: &ArgMatches){
 				_ => unreachable!(),
 		}
 	};
-	
+	stdout().flush().ok();
+
 	// TODO: ensure factor argument requires custom neural net file argument.
 	assert_eq!(params.len(), graph.num_params(), "Parameters selected do not have the size required by the neural net. Ensure that the same sample factor is used for upscaling and training", );
 
@@ -174,11 +176,12 @@ fn upscale(app_m: &ArgMatches){
 	println!(" Done");
 }
 
+
 fn train(app_m: &ArgMatches){
 	
 	let linear_loss = app_m.is_present("LINEAR_LOSS");
 
-	let mut g = sr_net(FACTOR, Some((1e-5, linear_loss)));
+	let mut g = sr_net(FACTOR, Some((1e-6, linear_loss)));
 	let recurse = app_m.is_present("RECURSE_SUBFOLDERS");
 	let training_set = ImageFolderSupplier::<ShuffleRandom>::new(Path::new(app_m.value_of("TRAINING_FOLDER").expect("No training folder?")), recurse, Cropping::Random{width:192, height:192});
 	let mut training_set = Buffer::new(training_set, 128);
@@ -196,9 +199,11 @@ fn train(app_m: &ArgMatches){
 
 	let mut solver = Cain::new(&mut g)
 		.num_subbatches(8)
-		.target_err(0.75)
-		.aggression(0.66)
-		.momentum(0.9)
+		.target_err(0.85)
+		.subbatch_increase_damping(0.15)
+		.subbatch_decrease_damping(0.15)
+		.aggression(0.5)
+		.momentum(0.95)
 		.initial_learning_rate(1e-4)
 		.finish();
 		
