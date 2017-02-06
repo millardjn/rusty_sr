@@ -2,10 +2,10 @@
 ![LogoNN](docs/logo_nn.png)![LogoLin](docs/logo_lin.png)![Logo](docs/logo_rs.png)
 
 Deep learning super resolution written in rust.
-Use baked in neural networks or train your own!
+Use baked in neural networks to upscale your images, or train your own specialised neural network!
 
-For best performance compile using environmental variable `RUSTFLAGS="-C target-cpu=native" ` and release mode `cargo build --release` or:
-`cargo rustc --release -- -C target-cpu=native`
+For best performance compile using environmental variable `RUSTFLAGS="-C target-cpu=native" ` and release mode `cargo build --release`
+or: `cargo rustc --release -- -C target-cpu=native`
 
 Feel free to open an issue to raise any problems or for general discussion.
 
