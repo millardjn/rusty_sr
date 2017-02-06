@@ -10,7 +10,7 @@ or: `cargo rustc --release -- -C target-cpu=native`
 Feel free to open an issue to raise any problems or for general discussion.
 
 ## Examples
-Set14 Cartoon (Using anime preset)
+Set14 Cartoon
 
 ![CartoonLowRes](docs/cartoon_nn.png)![Cartoon](docs/cartoon_rsa.png)
 
