@@ -20,7 +20,7 @@ Set14 Butterfly
 ![Butterfly](docs/butterfly_rs.png)
 
 Bank Lobby (test image for [Neural Enhance](https://github.com/alexjc/neural-enhance))
-CC-BY-SA @siv-athens
+CC-BY-SA @benarent
 
 ![BankLowRes](docs/bank_nn.png)
 ![Bank](docs/bank_rs.png)
