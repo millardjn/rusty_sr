@@ -1,7 +1,7 @@
 # Rusty_SR
 ![LogoNN](docs/logo_nn.png)![LogoLin](docs/logo_lin.png)![Logo](docs/logo_rs.png)
 
-A Rust super-resolution tool, which when given a low resolution image utilises deep learning to infer the corresponding high resolution image.  
+A Rust super-resolution tool, which when given a low resolution image utilises deep learning to infer the corresponding high resolution image. 
 Use the included pre-trained neural networks to upscale your images, or easily train your own specialised neural network!  
 Feel free to open an issue for general discussion or to raise any problems.  
 
