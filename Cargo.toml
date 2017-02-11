@@ -1,6 +1,6 @@
 [package]
 name = "rusty_sr"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["James Millard <millard.jn@gmail.com>"]
 
 [dependencies]

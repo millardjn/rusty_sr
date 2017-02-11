@@ -9,16 +9,11 @@ mod network;
 use std::fs::*;
 use std::path::Path;
 use std::io::{stdout, Write, Read};
-
 use std::cmp;
 
 use clap::{Arg, App, SubCommand, AppSettings, ArgMatches};
 use bytevec::{ByteEncodable, ByteDecodable};
 use image::GenericImage;
-
-const IMAGENET_PARAMS: &'static [u8] = include_bytes!("res/imagenet.rsr");
-const IMAGENETLINEAR_PARAMS: &'static [u8] = include_bytes!("res/imagenetlinear.rsr");
-const ANIME_PARAMS: &'static [u8] = include_bytes!("res/anime.rsr");
 
 use network::*;
 use alumina::supplier::*;
@@ -28,12 +23,16 @@ use alumina::shape::*;
 use alumina::opt::cain::Cain;
 use alumina::opt::*;
 
+const IMAGENET_PARAMS: &'static [u8] = include_bytes!("res/imagenet.rsr");
+const IMAGENETLINEAR_PARAMS: &'static [u8] = include_bytes!("res/imagenetlinear.rsr");
+const ANIME_PARAMS: &'static [u8] = include_bytes!("res/anime.rsr");
+
 // TODO: expose upscaling factor as argument.
 const FACTOR: usize = 3;
 
 fn main() {
 	let app_m = App::new("Rusty SR")
-	.version("v0.1.0")
+	.version("v0.1.1")
 	.author("J. Millard <millard.jn@gmail.com>")
 	.about("A convolutional neural network trained to upscale images")
 	.settings(&[AppSettings::SubcommandsNegateReqs, AppSettings::VersionlessSubcommands])
@@ -43,7 +42,7 @@ fn main() {
 		.index(1)
 	)
 	.arg(Arg::with_name("OUTPUT_FILE")
-		.help("Sets the PNG output file to write/overwrite")
+		.help("Sets the output file to write/overwrite (.png recommended)")
 		.required(true)
 		.index(2)
 	)
@@ -148,13 +147,13 @@ fn upscale(app_m: &ArgMatches){
 			Some("imagenetlinear") => {
 				print!("Upscaling using linear loss imagenet neural net parameters...");
 				(<Vec<f32>>::decode::<u32>(IMAGENETLINEAR_PARAMS).expect("ByteVec conversion failed"), sr_net(FACTOR, None))},
-			Some("anime")           => {
+			Some("anime") => {
 				print!("Upscaling using anime neural net parameters...");
 				(<Vec<f32>>::decode::<u32>(ANIME_PARAMS).expect("ByteVec conversion failed"),    sr_net(FACTOR, None))},
-			Some("bilinear")        => {
+			Some("bilinear") => {
 				print!("Upscaling using bilinear interpolation...");
 				(Vec::new(), bilinear_net(FACTOR))},
-				_ => unreachable!(),
+			_ => unreachable!(),
 		}
 	};
 	stdout().flush().ok();
@@ -164,14 +163,15 @@ fn upscale(app_m: &ArgMatches){
 
 	let input_image = image::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).expect("Error opening input image file.");
 
-	let mut out_file = File::create(app_m.value_of("OUTPUT_FILE").expect("No output file given?")).expect("Could not save output file.");
+	let out_path = Path::new(app_m.value_of("OUTPUT_FILE").expect("No output file given?"));
 
 	let mut input = NodeData::new_blank(DataShape::new(CHANNELS, &[input_image.dimensions().0 as usize, input_image.dimensions().1 as usize], 1));
 
 	img_to_data(&mut input.values, &input_image);
 
 	let output = graph.forward(1, vec![input], &params).remove(0);
-	data_to_img(output).save(&mut out_file, image::ImageFormat::PNG).expect("Could not write output file");
+
+	data_to_img(output).to_rgba().save(out_path).expect("Could not write output file");
 	
 	println!(" Done");
 }

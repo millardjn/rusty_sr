@@ -9,6 +9,8 @@ Feel free to open an issue for general discussion or to raise any problems.
 To upscale an image:  
 `rusty_sr.exe <INPUT_FILE> <OUTPUT_FILE>`  
 
+PNG output files are recommended.
+
 For further options:  
 `rusty_sr.exe --help`  
 `rusty_sr.exe train --help`  
