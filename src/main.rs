@@ -168,9 +168,10 @@ fn upscale(app_m: &ArgMatches){
 	let mut input = NodeData::new_blank(DataShape::new(CHANNELS, &[input_image.dimensions().0 as usize, input_image.dimensions().1 as usize], 1));
 
 	img_to_data(&mut input.values, &input_image);
-
 	let output = graph.forward(1, vec![input], &params).remove(0);
 
+	print!(" Writing file...");
+	stdout().flush().ok();
 	data_to_img(output).to_rgba().save(out_path).expect("Could not write output file");
 	
 	println!(" Done");
