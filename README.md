@@ -5,7 +5,7 @@ A Rust super-resolution tool, which when given a low resolution image utilises d
 Use the included pre-trained neural networks to upscale your images, or easily train your own specialised neural network!  
 Feel free to open an issue for general discussion or to raise any problems.  
 
-# Usage
+## Usage
 To upscale an image:  
 `rusty_sr.exe <INPUT_FILE> <OUTPUT_FILE>`  
 
@@ -15,7 +15,7 @@ For further options:
 `rusty_sr.exe --help`  
 `rusty_sr.exe train --help`  
 
-# Installation
+## Setup
 To get the rust compiler (rustc) use [rustup](https://rustup.rs). For best performance compile using environmental variable `RUSTFLAGS="-C target-cpu=native" ` and a release mode build `cargo build --release`.  
 Or in one line: `cargo rustc --release -- -C target-cpu=native`.  
 
