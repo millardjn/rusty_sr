@@ -22,10 +22,10 @@ use alumina::graph::*;
 use alumina::shape::*;
 use alumina::opt::cain::Cain;
 use alumina::opt::*;
+//use alumina::ops::activ::{SrgbToLinearFunc, LinearToSrgbFunc, ActivationFunc};
 
-const IMAGENET_PARAMS: &'static [u8] = include_bytes!("res/imagenet.rsr");
-const IMAGENETLINEAR_PARAMS: &'static [u8] = include_bytes!("res/imagenetlinear.rsr");
-const ANIME_PARAMS: &'static [u8] = include_bytes!("res/anime.rsr");
+const L1IMAGENET_PARAMS: &'static [u8] = include_bytes!("res/L1imagenet.rsr");
+const L2IMAGENET_PARAMS: &'static [u8] = include_bytes!("res/L2imagenet.rsr");
 
 // TODO: expose upscaling factor as argument.
 const FACTOR: usize = 3;
@@ -47,11 +47,11 @@ fn main() {
 		.index(2)
 	)
 	.arg(Arg::with_name("parameters")
-		.help("Sets which built-in parameters to use with the neural net")
+		.help("Sets which built-in parameters to use with the neural net, default: L1imagenet")
 		.short("p")
 		.long("parameters")
 		.value_name("PARAMETERS")
-		.possible_values(&["imagenet", "imagenetlinear", "anime", "bilinear"])
+		.possible_values(&["L1imagenet", "L2imagenet", "bilinear"])
 		.takes_value(true)
 	)
 	.arg(Arg::with_name("custom")
@@ -81,10 +81,14 @@ fn main() {
 			.index(2)
 			.help("Images from this folder(or sub-folders) will be used for training")
 		)
-		.arg(Arg::with_name("LINEAR_LOSS")
-			.short("l")
-			.long("linearLoss")
-			.help("Apply MSE loss to a linearised RGB output rather than sRGB values")
+		.arg(Arg::with_name("L1_LOSS")
+			.long("L1Loss")
+			.help("Use a charbonneir loss with a scale of 0.01 to approximated the L1 reconstruction loss (default loss is L2).")
+			.takes_value(false)
+		)
+		.arg(Arg::with_name("SRGB_DOWNSCALE")
+			.long("srgbDown")
+			.help("Perform downscaling for training in sRGB colorspace")
 			.takes_value(false)
 		)
 		.arg(Arg::with_name("RECURSE_SUBFOLDERS")
@@ -112,20 +116,48 @@ fn main() {
 			.value_name("N")
 			.help("Set upper limit on number of images used for each validation pass")
 			.takes_value(true)
-		) 
+		)
+	// .subcommand(SubCommand::with_name("psnr")
+	// 	.about("Train a new set of neural parameters on your own dataset")
+	// 	.arg(Arg::with_name("IMAGE1")
+	// 		.required(true)
+	// 		.index(1)
+	// 		.help("PSNR is calculated using the difference between this image and IMAGE2")
+	// 	)
+	// 	.arg(Arg::with_name("IMAGE2")
+	// 		.required(true)
+	// 		.index(2)
+	// 		.help("PSNR is calculated using the difference between this image and IMAGE1")
+	// 	)
+	// 	.arg(Arg::with_name("channel")
+	// 		.help("Sets which channels will be included in psnr calculation")
+	// 		.short("c")
+	// 		.long("channel")
+	// 		.value_name("CHANNEL")
+	// 		.possible_values(&["sRGB", "RGB", "luminance", "luma"])
+	// 		.takes_value(true)
+	// 	)
+	// 	.arg(Arg::with_name("border")
+	// 		.help("Sets which channels will be included in psnr calculation")
+	// 		.short("b")
+	// 		.long("border")
+	// 		.value_name("BORDER")
+	// 		.takes_value(true)
+	// 		.validator(|s| {
+	// 			s.parse::<usize>().map(|x| ()).map_err(|int_err| format!("border parameter must be a valid unsized integer: {}", int_err))
+	// 		})
+	// 	))
 	).get_matches();
-
-
+	
 	if let Some(sub_m) = app_m.subcommand_matches("train") {
 		train(sub_m);
-		return;
+	// } if let Some(sub_m) = app_m.subcommand_matches("psnr") {
+	// 	psnr(sub_m);
+	} else {
+		upscale(&app_m);
 	}
-
-	
-	upscale(&app_m);
 	
 }
-
 
 fn upscale(app_m: &ArgMatches){
 		
@@ -141,15 +173,12 @@ fn upscale(app_m: &ArgMatches){
 		(Vec::new(), downsample_net(FACTOR))
 	} else {
 		match app_m.value_of("parameters") {
-			Some("imagenet") | None => {
+			Some("L1imagenet") | None => {
 				print!("Upscaling using imagenet neural net parameters...");
-				(<Vec<f32>>::decode::<u32>(IMAGENET_PARAMS).expect("ByteVec conversion failed"), sr_net(FACTOR, None))},
-			Some("imagenetlinear") => {
-				print!("Upscaling using linear loss imagenet neural net parameters...");
-				(<Vec<f32>>::decode::<u32>(IMAGENETLINEAR_PARAMS).expect("ByteVec conversion failed"), sr_net(FACTOR, None))},
-			Some("anime") => {
-				print!("Upscaling using anime neural net parameters...");
-				(<Vec<f32>>::decode::<u32>(ANIME_PARAMS).expect("ByteVec conversion failed"),    sr_net(FACTOR, None))},
+				(<Vec<f32>>::decode::<u32>(L1IMAGENET_PARAMS).expect("ByteVec conversion failed"), sr_net(FACTOR, None))},
+			Some("L2imagenet")=> {
+				print!("Upscaling using imagenet neural net parameters...");
+				(<Vec<f32>>::decode::<u32>(L2IMAGENET_PARAMS).expect("ByteVec conversion failed"), sr_net(FACTOR, None))},
 			Some("bilinear") => {
 				print!("Upscaling using bilinear interpolation...");
 				(Vec::new(), bilinear_net(FACTOR))},
@@ -180,9 +209,22 @@ fn upscale(app_m: &ArgMatches){
 
 fn train(app_m: &ArgMatches){
 	
-	let linear_loss = app_m.is_present("LINEAR_LOSS");
+	let srgb_downscale = app_m.is_present("SRGB_DOWNSCALE");
+	if srgb_downscale {
+		println!("Downscaling for training performed in sRGB");
+	} else {
+		println!("Downscaling for training performed in linear RGB");
+	}
 
-	let mut g = sr_net(FACTOR, Some((1e-6, linear_loss)));
+	let (power, scale) = if app_m.is_present("L1_LOSS") {
+		println!("Training using the L2 reconstruction loss");
+		(1.0, 0.01) // L1, smoothed
+	} else {
+		println!("Training using the L2 reconstruction loss");
+		(2.0, 1.0) // L2
+	};
+
+	let mut g = sr_net(FACTOR, Some((1e-6, srgb_downscale, power, scale))); // at 1e-3 the error was 1e-1, at 1e-6 err is 1e-4
 	let recurse = app_m.is_present("RECURSE_SUBFOLDERS");
 	let training_set = ImageFolderSupplier::<ShuffleRandom>::new(Path::new(app_m.value_of("TRAINING_FOLDER").expect("No training folder?")), recurse, Cropping::Random{width:192, height:192});
 	let mut training_set = Buffer::new(training_set, 128);
@@ -196,22 +238,22 @@ fn train(app_m: &ArgMatches){
 		g.init_params()
 	};
 
-
-
 	let mut solver = Cain::new(&mut g)
-		.num_subbatches(8)
-		.target_err(0.85)
-		.subbatch_increase_damping(0.15)
-		.subbatch_decrease_damping(0.15)
+		.num_subbatches(4)
+		.target_err(0.9)
+		.subbatch_increase_damping(0.25)//25)
+		.subbatch_decrease_damping(0.125)//125)
+		.initial_subbatch_size(1.0)
+		.rate_adapt_coefficient(1.05)
 		.aggression(0.5)
 		.momentum(0.95)
-		.initial_learning_rate(1e-4)
+		.initial_learning_rate(1.0e-3)
 		.finish();
 		
 	let param_file_path = Path::new(app_m.value_of("PARAMETER_FILE").expect("No parameter file?")).to_path_buf();
 
 	solver.add_step_callback(move |data|{
-		if data.step_count % 100 == 0 || data.step_count == 1{
+		if data.step_count % 100 == 0 {
 			let mut parameter_file = File::create(&param_file_path).expect("Could not make parameter file");
 			let bytes = data.params.encode::<u32>().expect("ByteVec conversion failed");
 			parameter_file.write_all(&bytes).expect("Could not save to parameter file");
@@ -221,7 +263,7 @@ fn train(app_m: &ArgMatches){
 
 
 	if let Some(val_str) = app_m.value_of("VALIDATION_FOLDER"){ // Add occasional test set evaluation as solver callback
-		let mut g2 = sr_net(FACTOR, Some((0.0, linear_loss)));
+		let mut g2 = sr_net(FACTOR, Some((0.0, srgb_downscale, power, scale)));
 		let validation_set = ImageFolderSupplier::<Sequential>::new(Path::new(val_str), recurse, Cropping::None);
 		
 		let n = if let Some(val_max) = app_m.value_of("val_max"){
@@ -236,17 +278,51 @@ fn train(app_m: &ArgMatches){
 			if data.step_count % 100 == 0 || data.step_count == 1{
 
 				let mut err_sum = 0.0;
-				let mut pix_sum = 0.0;
-				for _ in 0..n {
-					let (input, training_input) = validation_set.next_n(1);
-					let pixels = input[0].shape.flat_size_single() as f32;
-					let (batch_err, _, _) = g2.backprop(1, input, training_input, data.params);
+				let mut y_err_sum = 0.0;
+				let mut pix_sum = 0.0f32;
 
-					pix_sum += pixels;
-					err_sum += batch_err * pixels;
+				let mut psnr_sum = 0.0;
+				let mut y_psnr_sum = 0.0;
+
+
+				for _ in 0..n {
+					let (input, _training_input) = validation_set.next_n(1);
+					let input_copy = input[0].clone();
+					//let pixels = input[0].shape.flat_size_single() as f32;
+					let output = g2.forward(1, input, data.params).remove(0);
+					
+					let mut err = 0.0;
+					let mut y_err = 0.0;
+					let mut pix = 0.0f32;
+					for (o, i) in output.values.chunks(CHANNELS).zip(input_copy.values.chunks(CHANNELS)){
+						let dr = o[0].max(0.0).min(1.0)-i[0].max(0.0).min(1.0);
+						let dg = o[1].max(0.0).min(1.0)-i[1].max(0.0).min(1.0);
+						let db = o[2].max(0.0).min(1.0)-i[2].max(0.0).min(1.0);
+
+
+						//let yo = LinearToSrgbFunc::activ(SrgbToLinearFunc::activ(o[0].max(0.0).min(1.0)).0*0.212655 + SrgbToLinearFunc::activ(o[1].max(0.0).min(1.0)).0*0.715158 + SrgbToLinearFunc::activ(o[2].max(0.0).min(1.0)).0*0.072187).0;
+						//let yi = LinearToSrgbFunc::activ(SrgbToLinearFunc::activ(i[0].max(0.0).min(1.0)).0*0.212655 + SrgbToLinearFunc::activ(i[1].max(0.0).min(1.0)).0*0.715158 + SrgbToLinearFunc::activ(i[2].max(0.0).min(1.0)).0*0.072187).0;
+
+
+						let y_diff = dr*0.299 + dg*0.587 + db*0.114;
+
+						y_err += y_diff*y_diff;//(yo - yi)*(yo - yi);
+						err += (dr*dr + dg*dg + db*db)/3.0; // R G B
+						pix += 1.0;
+					}
+					psnr_sum += -10.0*(err/pix).log10();
+					y_psnr_sum += -10.0*(y_err/pix).log10();
+
+					pix_sum += pix;
+					err_sum += err;
+					y_err_sum += y_err;
 				}
+
+				psnr_sum /= n as f32;
+				y_psnr_sum /= n as f32;
 				let psnr = -10.0*(err_sum/pix_sum).log10();
-				println!("Validation PSNR:\t{}", psnr);
+				let y_psnr = -10.0*(y_err_sum/pix_sum).log10();
+				println!("Validation PixAvgPSNR:\t{}\tPixAvgY_PSNR:\t{}\tImgAvgPSNR:\t{}\tImgAvgY_PSNR:\t{}", psnr, y_psnr, psnr_sum, y_psnr_sum);
 			}
 
 			CallbackSignal::Continue
@@ -259,3 +335,8 @@ fn train(app_m: &ArgMatches){
 	solver.optimise_from(&mut training_set, start_params);	
 	println!("Done");
 }
+
+// fn psnr(app_m: &ArgMatches){
+
+
+// }
