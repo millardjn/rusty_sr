@@ -24,10 +24,11 @@ use alumina::opt::cain::Cain;
 use alumina::opt::*;
 //use alumina::ops::activ::{SrgbToLinearFunc, LinearToSrgbFunc, ActivationFunc};
 
-const L1IMAGENET_PARAMS: &'static [u8] = include_bytes!("res/L1imagenet.rsr");
-const L2IMAGENET_PARAMS: &'static [u8] = include_bytes!("res/L2imagenet.rsr");
+const L1NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L1SplineNatural.rsr");
+const L1ANIME_PARAMS: &'static [u8] = include_bytes!("res/L1SplineAnime.rsr");
+const L1FACES_PARAMS: &'static [u8] = include_bytes!("res/L1SplineFaces.rsr");
 
-// TODO: expose upscaling factor as argument.
+// TODO: expose upsampling factor as argument.
 const FACTOR: usize = 3;
 
 fn main() {
@@ -51,7 +52,7 @@ fn main() {
 		.short("p")
 		.long("parameters")
 		.value_name("PARAMETERS")
-		.possible_values(&["L1imagenet", "L2imagenet", "bilinear"])
+		.possible_values(&["natural", "anime", "faces", "bilinear"])
 		.takes_value(true)
 	)
 	.arg(Arg::with_name("custom")
@@ -61,13 +62,6 @@ fn main() {
 		.value_name("PARAMETER_FILE")
 		.help("Sets a custom parameter file (.rsr) to use with the neural net")
 		.takes_value(true)
-	)
-	.arg(Arg::with_name("downsample")
-		.conflicts_with_all(&["parameters", "custom"])
-		.short("d")
-		.long("downsample")
-		.help("Perform downscaling rather than upscaling")
-		.takes_value(false)
 	)
 	.subcommand(SubCommand::with_name("train")
 		.about("Train a new set of neural parameters on your own dataset")
@@ -88,7 +82,7 @@ fn main() {
 		)
 		.arg(Arg::with_name("SRGB_DOWNSCALE")
 			.long("srgbDown")
-			.help("Perform downscaling for training in sRGB colorspace")
+			.help("Perform downsampling for training in sRGB colorspace")
 			.takes_value(false)
 		)
 		.arg(Arg::with_name("RECURSE_SUBFOLDERS")
@@ -117,6 +111,28 @@ fn main() {
 			.help("Set upper limit on number of images used for each validation pass")
 			.takes_value(true)
 		)
+	)
+	.subcommand(SubCommand::with_name("downsample")
+	 	.about("Downsample images")
+		.arg(Arg::with_name("INPUT_FILE")
+			.help("Sets the input image to downscale")
+			.required(true)
+			.index(1)
+		)
+		.arg(Arg::with_name("OUTPUT_FILE")
+			.help("Sets the output file to write/overwrite (.png recommended)")
+			.required(true)
+			.index(2)
+		)
+	 	.arg(Arg::with_name("COLOURSPACE")
+	 		.help("colorspace in which to perform downsampling")
+	 		.short("c")
+	 		.long("colourspace")
+	 		.value_name("COLOURSPACE")
+	 		.possible_values(&["sRGB", "RGB"])
+	 		.takes_value(true)
+	 	)
+	)
 	// .subcommand(SubCommand::with_name("psnr")
 	// 	.about("Train a new set of neural parameters on your own dataset")
 	// 	.arg(Arg::with_name("IMAGE1")
@@ -147,16 +163,50 @@ fn main() {
 	// 			s.parse::<usize>().map(|x| ()).map_err(|int_err| format!("border parameter must be a valid unsized integer: {}", int_err))
 	// 		})
 	// 	))
-	).get_matches();
+	.get_matches();
 	
 	if let Some(sub_m) = app_m.subcommand_matches("train") {
 		train(sub_m);
+	} if let Some(sub_m) = app_m.subcommand_matches("downsample") {
+		downsample(sub_m);
 	// } if let Some(sub_m) = app_m.subcommand_matches("psnr") {
 	// 	psnr(sub_m);
 	} else {
 		upscale(&app_m);
 	}
 	
+}
+
+fn downsample(app_m: &ArgMatches){
+		
+	let (params, mut graph) = match app_m.value_of("colourspace") {
+		Some("RGB") | None => {
+			print!("Downsampling using average pooling of linear RGB values...");
+			(Vec::new(), downsample_lin_net(FACTOR))},
+		Some("sRGB")=> {
+			print!("Downsampling using average pooling of sRGB values...");
+			(Vec::new(), downsample_srgb_net(FACTOR))},
+		_ => unreachable!(),
+	};
+
+	stdout().flush().ok();
+
+	assert_eq!(params.len(), graph.num_params(), "Parameters selected do not have the size required by the neural net. Ensure that the same sample factor is used for upsampling and training", );
+
+	let input_image = image::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).expect("Error opening input image file.");
+
+	let out_path = Path::new(app_m.value_of("OUTPUT_FILE").expect("No output file given?"));
+
+	let mut input = NodeData::new_blank(DataShape::new(CHANNELS, &[input_image.dimensions().0 as usize, input_image.dimensions().1 as usize], 1));
+
+	img_to_data(&mut input.values, &input_image);
+	let output = graph.forward(1, vec![input], &params).remove(0);
+
+	print!(" Writing file...");
+	stdout().flush().ok();
+	data_to_img(output).to_rgba().save(out_path).expect("Could not write output file");
+	
+	println!(" Done");	
 }
 
 fn upscale(app_m: &ArgMatches){
@@ -166,21 +216,21 @@ fn upscale(app_m: &ArgMatches){
 		let mut param_file = File::open(Path::new(file_str)).expect("Error opening parameter file");
 		let mut data = Vec::new();
 		param_file.read_to_end(&mut data).expect("Reading parameter file failed");
-		print!("Upscaling using custom neural net parameters...");
+		print!("Upsampling using custom neural net parameters...");
 		(<Vec<f32>>::decode::<u32>(&data).expect("ByteVec conversion failed"), sr_net(FACTOR, None))
-	} else if app_m.is_present("downsample"){
-		print!("Downsampling using average pooling of linear RGB values...");
-		(Vec::new(), downsample_net(FACTOR))
 	} else {
 		match app_m.value_of("parameters") {
-			Some("L1imagenet") | None => {
-				print!("Upscaling using imagenet neural net parameters...");
-				(<Vec<f32>>::decode::<u32>(L1IMAGENET_PARAMS).expect("ByteVec conversion failed"), sr_net(FACTOR, None))},
-			Some("L2imagenet")=> {
-				print!("Upscaling using imagenet neural net parameters...");
-				(<Vec<f32>>::decode::<u32>(L2IMAGENET_PARAMS).expect("ByteVec conversion failed"), sr_net(FACTOR, None))},
+			Some("natural") | None => {
+				print!("Upsampling using natural neural net parameters...");
+				(<Vec<f32>>::decode::<u32>(L1NATURAL_PARAMS).expect("ByteVec conversion failed"), sr_net(FACTOR, None))},
+			Some("anime")=> {
+				print!("Upsampling using anime neural net parameters...");
+				(<Vec<f32>>::decode::<u32>(L1ANIME_PARAMS).expect("ByteVec conversion failed"), sr_net(FACTOR, None))},
+			Some("faces")=> {
+				print!("Upsampling using faces neural net parameters...");
+				(<Vec<f32>>::decode::<u32>(L1FACES_PARAMS).expect("ByteVec conversion failed"), sr_net(FACTOR, None))},
 			Some("bilinear") => {
-				print!("Upscaling using bilinear interpolation...");
+				print!("Upsampling using bilinear interpolation...");
 				(Vec::new(), bilinear_net(FACTOR))},
 			_ => unreachable!(),
 		}
@@ -188,7 +238,7 @@ fn upscale(app_m: &ArgMatches){
 	stdout().flush().ok();
 
 	// TODO: ensure factor argument requires custom neural net file argument.
-	assert_eq!(params.len(), graph.num_params(), "Parameters selected do not have the size required by the neural net. Ensure that the same sample factor is used for upscaling and training", );
+	assert_eq!(params.len(), graph.num_params(), "Parameters selected do not have the size required by the neural net. Ensure that the same sample factor is used for upsampling and training", );
 
 	let input_image = image::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).expect("Error opening input image file.");
 
@@ -211,13 +261,13 @@ fn train(app_m: &ArgMatches){
 	
 	let srgb_downscale = app_m.is_present("SRGB_DOWNSCALE");
 	if srgb_downscale {
-		println!("Downscaling for training performed in sRGB");
+		println!("Downsampling for training performed in sRGB");
 	} else {
-		println!("Downscaling for training performed in linear RGB");
+		println!("Downsampling for training performed in linear RGB");
 	}
 
 	let (power, scale) = if app_m.is_present("L1_LOSS") {
-		println!("Training using the L2 reconstruction loss");
+		println!("Training using the L1 reconstruction loss");
 		(1.0, 0.01) // L1, smoothed
 	} else {
 		println!("Training using the L2 reconstruction loss");
@@ -243,10 +293,11 @@ fn train(app_m: &ArgMatches){
 		.target_err(0.9)
 		.subbatch_increase_damping(0.25)//25)
 		.subbatch_decrease_damping(0.125)//125)
-		.initial_subbatch_size(1.0)
-		.rate_adapt_coefficient(1.05)
+		.initial_subbatch_size(8.0)
+		.rate_adapt_coefficient(1.0)
 		.aggression(0.5)
 		.momentum(0.95)
+		.max_subbatch_size(8)
 		.initial_learning_rate(1.0e-3)
 		.finish();
 		
