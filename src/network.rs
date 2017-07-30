@@ -159,13 +159,9 @@ pub fn downsample_srgb_net(factor: usize) -> Graph{
 	let mut g = Graph::new();
 
 	let input_hr = g.add_input_node(Node::new_shaped(CHANNELS, 2, "input_hr"));
-	let input_hr_lin = g.add_node(Node::new_shaped(CHANNELS, 2, "input_hr_lin"));
-	let input_pool = g.add_node(Node::new_shaped(CHANNELS, 2, "input_pool"));
 	let output = g.add_output_node(Node::new_shaped(CHANNELS, 2, "output"));
-
-	g.add_operation(SrgbToLinear::new(&input_hr, &input_hr_lin,"srgb2lin"));
-	g.add_operation(Pooling::new(&input_hr_lin, &input_pool, &[factor, factor], "input_pooling"));
-	g.add_operation(LinearToSrgb::new(&input_pool, &output, "lin2srgb"));
+	
+	g.add_operation(Pooling::new(&input_hr, &output, &[factor, factor], "input_pooling"));
 
 	g
 }

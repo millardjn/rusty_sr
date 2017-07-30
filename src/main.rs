@@ -47,15 +47,15 @@ fn main() {
 		.required(true)
 		.index(2)
 	)
-	.arg(Arg::with_name("parameters")
-		.help("Sets which built-in parameters to use with the neural net, default: L1imagenet")
+	.arg(Arg::with_name("PARAMETERS")
+		.help("Sets which built-in parameters to use with the neural net, default: natural")
 		.short("p")
 		.long("parameters")
 		.value_name("PARAMETERS")
 		.possible_values(&["natural", "anime", "faces", "bilinear"])
 		.takes_value(true)
 	)
-	.arg(Arg::with_name("custom")
+	.arg(Arg::with_name("CUSTOM")
 		.conflicts_with("parameters")
 		.short("c")
 		.long("custom")
@@ -103,7 +103,7 @@ fn main() {
 			.help("Images from this folder(or sub-folders) will be used to evaluate training progress")
 			.takes_value(true)
 		)
-		.arg(Arg::with_name("val_max")
+		.arg(Arg::with_name("VAL_MAX")
 			.requires("VALIDATION_FOLDER")
 			.short("m")
 			.long("val_max")
@@ -178,8 +178,8 @@ fn main() {
 }
 
 fn downsample(app_m: &ArgMatches){
-		
-	let (params, mut graph) = match app_m.value_of("colourspace") {
+
+	let (params, mut graph) = match app_m.value_of("COLOURSPACE") {
 		Some("RGB") | None => {
 			print!("Downsampling using average pooling of linear RGB values...");
 			(Vec::new(), downsample_lin_net(FACTOR))},
@@ -212,14 +212,14 @@ fn downsample(app_m: &ArgMatches){
 fn upscale(app_m: &ArgMatches){
 		
 	//-- Sort out parameters and graph
-	let (params, mut graph) = if let Some(file_str) = app_m.value_of("custom") {
+	let (params, mut graph) = if let Some(file_str) = app_m.value_of("CUSTOM") {
 		let mut param_file = File::open(Path::new(file_str)).expect("Error opening parameter file");
 		let mut data = Vec::new();
 		param_file.read_to_end(&mut data).expect("Reading parameter file failed");
 		print!("Upsampling using custom neural net parameters...");
 		(<Vec<f32>>::decode::<u32>(&data).expect("ByteVec conversion failed"), sr_net(FACTOR, None))
 	} else {
-		match app_m.value_of("parameters") {
+		match app_m.value_of("PARAMETERS") {
 			Some("natural") | None => {
 				print!("Upsampling using natural neural net parameters...");
 				(<Vec<f32>>::decode::<u32>(L1NATURAL_PARAMS).expect("ByteVec conversion failed"), sr_net(FACTOR, None))},
@@ -317,7 +317,7 @@ fn train(app_m: &ArgMatches){
 		let mut g2 = sr_net(FACTOR, Some((0.0, srgb_downscale, power, scale)));
 		let validation_set = ImageFolderSupplier::<Sequential>::new(Path::new(val_str), recurse, Cropping::None);
 		
-		let n = if let Some(val_max) = app_m.value_of("val_max"){
+		let n = if let Some(val_max) = app_m.value_of("VAL_MAX"){
 			cmp::min(validation_set.epoch_size() as usize, val_max.parse::<usize>().expect("-val_max N must be a positive integer"))
 		} else {
 			validation_set.epoch_size() as usize
