@@ -8,6 +8,6 @@ rand = "0.3"
 clap = "2"
 image = "0.12"
 bytevec = "0.2.0"
-alumina = { version = "0.1" , features = ["images"]}
+alumina = { version = "0.1.1" , features = ["images"]}
 
 

@@ -20,7 +20,7 @@ use alumina::supplier::*;
 use alumina::supplier::imagefolder::*;
 use alumina::graph::*;
 use alumina::shape::*;
-use alumina::opt::cain::Cain;
+use alumina::opt::adam::Adam;
 use alumina::opt::*;
 
 const IMAGENET_PARAMS: &'static [u8] = include_bytes!("res/imagenet.rsr");
@@ -196,18 +196,15 @@ fn train(app_m: &ArgMatches){
 		g.init_params()
 	};
 
-
-
-	let mut solver = Cain::new(&mut g)
-		.num_subbatches(8)
-		.target_err(0.85)
-		.subbatch_increase_damping(0.15)
-		.subbatch_decrease_damping(0.15)
-		.aggression(0.5)
-		.momentum(0.95)
-		.initial_learning_rate(1e-4)
+	let mut solver = Adam::new(&mut g)
+		.batch_size(4)
+		.beta1(0.95)
+		.beta2(0.995)
+		.epsilon(1e-7)
+		.learning_rate(2e-3)
 		.finish();
-		
+
+
 	let param_file_path = Path::new(app_m.value_of("PARAMETER_FILE").expect("No parameter file?")).to_path_buf();
 
 	solver.add_step_callback(move |data|{
