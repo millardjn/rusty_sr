@@ -1,18 +1,15 @@
 [package]
 name = "rusty_sr"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["James Millard <millard.jn@gmail.com>"]
 
 [dependencies]
 rand = "0.3"
 clap = "2"
-image = "0.14"
-bytevec = "0.2.0"
-#alumina = {path = "D:/Repositories/alumina", features = ["images"]}
-#alumina = { version = "0.1" , features = ["images"]}
+image = "0.17"
+ndarray = {version = "0.10", features = ["serde-1"] }
+serde = "1"
+serde_derive = "1"
+bincode = "0.9.2"
+alumina = { version = "0.2.0" , features = ["images"]}
 
-[dependencies.alumina]
-git = "https://github.com/millardjn/alumina.git"
-branch = "GraphRewrite"
-#path = "D:/Repositories/alumina"
-features = ["images"]

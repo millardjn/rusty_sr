@@ -1,8 +1,15 @@
-extern crate bytevec;
-extern crate rand;
+#[macro_use]
 extern crate alumina;
+extern crate rand;
 extern crate clap;
 extern crate image;
+extern crate ndarray;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde;
+extern crate bincode;
+
+
 
 mod network;
 
@@ -10,26 +17,25 @@ use std::fs::*;
 use std::path::Path;
 use std::io::{stdout, Write, Read};
 use std::cmp;
+use std::iter;
 
+use bincode::{serialize, deserialize, Infinite};
 use clap::{Arg, App, SubCommand, AppSettings, ArgMatches};
-use bytevec::{ByteEncodable, ByteDecodable};
-use image::GenericImage;
 
 use network::*;
-use alumina::supplier::*;
-use alumina::supplier::imagefolder::*;
-use alumina::graph::*;
-use alumina::shape::*;
-use alumina::opt::cain::Cain;
-use alumina::opt::*;
-//use alumina::ops::activ::{SrgbToLinearFunc, LinearToSrgbFunc, ActivationFunc};
+
+use ndarray::{ArrayD, Zip, IxDyn, Si, Axis};
+
+use alumina::opt::adam::Adam;
+use alumina::data::image_folder::{ImageFolder, image_to_data, data_to_image};
+use alumina::data::{DataSet, DataStream, Cropping};
+use alumina::graph::Result;
+use alumina::opt::{Opt, UnboxedCallbacks, CallbackSignal, max_steps};
 
 const L1NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L1SplineNatural.rsr");
 const L1ANIME_PARAMS: &'static [u8] = include_bytes!("res/L1SplineAnime.rsr");
 const L1FACES_PARAMS: &'static [u8] = include_bytes!("res/L1SplineFaces.rsr");
 
-// TODO: expose upsampling factor as argument.
-const FACTOR: usize = 3;
 
 fn main() {
 	let app_m = App::new("Rusty SR")
@@ -48,7 +54,7 @@ fn main() {
 		.index(2)
 	)
 	.arg(Arg::with_name("PARAMETERS")
-		.help("Sets which built-in parameters to use with the neural net, default: natural")
+		.help("Sets which built-in parameters to use with the neural net. Default: natural")
 		.short("p")
 		.long("parameters")
 		.value_name("PARAMETERS")
@@ -56,35 +62,53 @@ fn main() {
 		.takes_value(true)
 	)
 	.arg(Arg::with_name("CUSTOM")
-		.conflicts_with("parameters")
+		.conflicts_with("PARAMETERS")
 		.short("c")
 		.long("custom")
 		.value_name("PARAMETER_FILE")
 		.help("Sets a custom parameter file (.rsr) to use with the neural net")
 		.takes_value(true)
 	)
+	.arg(Arg::with_name("BILINEAR_FACTOR")
+		.short("f")
+		.long("factor")
+		.help("The integer upscaling factor used if bilinear upscaling is performed. Default 3")
+		.takes_value(true)
+	)
 	.subcommand(SubCommand::with_name("train")
 		.about("Train a new set of neural parameters on your own dataset")
-		.arg(Arg::with_name("PARAMETER_FILE")
-			.required(true)
-			.index(1)
-			.help("Learned network parameters will be (over)written to this parameter file (.rsr)")
-		)
 		.arg(Arg::with_name("TRAINING_FOLDER")
 			.required(true)
-			.index(2)
+			.index(1)
 			.help("Images from this folder(or sub-folders) will be used for training")
 		)
-		.arg(Arg::with_name("L1_LOSS")
-			.long("L1Loss")
-			.help("Use a charbonneir loss with a scale of 0.01 to approximated the L1 reconstruction loss (default loss is L2).")
-			.takes_value(false)
+		.arg(Arg::with_name("PARAMETER_FILE")
+			.required(true)
+			.index(2)
+			.help("Learned network parameters will be (over)written to this parameter file (.rsr)")
 		)
-		.arg(Arg::with_name("SRGB_DOWNSCALE")
-			.long("srgbDown")
-			.help("Perform downsampling for training in sRGB colorspace")
-			.takes_value(false)
+		.arg(Arg::with_name("LEARNING_RATE")
+			.short("R")
+			.long("rate")
+			.help("The learning rate used by the Adam optimiser. Default: 1e-2")
+			.takes_value(true)
 		)
+		.arg(Arg::with_name("TRAINING_LOSS")
+	 		.help("Selects whether the neural net learns to minimise the L1 or L2 loss. Default: L1")
+	 		.short("l")
+	 		.long("loss")
+	 		.value_name("LOSS")
+	 		.possible_values(&["L1", "L2"])
+	 		.takes_value(true)
+	 	)
+		.arg(Arg::with_name("DOWNSCALE_COLOURSPACE")
+	 		.help("Colorspace in which to perform downsampling. Default: sRGB")
+	 		.short("c")
+	 		.long("colourspace")
+	 		.value_name("COLOURSPACE")
+	 		.possible_values(&["sRGB", "RGB"])
+	 		.takes_value(true)
+	 	)
 		.arg(Arg::with_name("RECURSE_SUBFOLDERS")
 			.short("r")
 			.long("recurse")
@@ -92,9 +116,16 @@ fn main() {
 			.takes_value(false)
 		)
 		.arg(Arg::with_name("START_PARAMETERS")
+			.conflicts_with("FACTOR")
 			.short("s")
 			.long("start")
 			.help("Start training from known parameters loaded from this .rsr file rather than random initialisation")
+			.takes_value(true)
+		)
+		.arg(Arg::with_name("FACTOR")
+			.short("f")
+			.long("factor")
+			.help("The integer upscaling factor of the network the be trained. Default: 3")
 			.takes_value(true)
 		)
 		.arg(Arg::with_name("VALIDATION_FOLDER")
@@ -114,15 +145,20 @@ fn main() {
 	)
 	.subcommand(SubCommand::with_name("downsample")
 	 	.about("Downsample images")
+		.arg(Arg::with_name("FACTOR")
+			.help("The integer downscaling factor")
+			.required(true)
+			.index(1)
+		)
 		.arg(Arg::with_name("INPUT_FILE")
 			.help("Sets the input image to downscale")
 			.required(true)
-			.index(1)
+			.index(2)
 		)
 		.arg(Arg::with_name("OUTPUT_FILE")
 			.help("Sets the output file to write/overwrite (.png recommended)")
 			.required(true)
-			.index(2)
+			.index(3)
 		)
 	 	.arg(Arg::with_name("COLOURSPACE")
 	 		.help("colorspace in which to perform downsampling")
@@ -133,200 +169,270 @@ fn main() {
 	 		.takes_value(true)
 	 	)
 	)
-	// .subcommand(SubCommand::with_name("psnr")
-	// 	.about("Train a new set of neural parameters on your own dataset")
-	// 	.arg(Arg::with_name("IMAGE1")
-	// 		.required(true)
-	// 		.index(1)
-	// 		.help("PSNR is calculated using the difference between this image and IMAGE2")
-	// 	)
-	// 	.arg(Arg::with_name("IMAGE2")
-	// 		.required(true)
-	// 		.index(2)
-	// 		.help("PSNR is calculated using the difference between this image and IMAGE1")
-	// 	)
-	// 	.arg(Arg::with_name("channel")
-	// 		.help("Sets which channels will be included in psnr calculation")
-	// 		.short("c")
-	// 		.long("channel")
-	// 		.value_name("CHANNEL")
-	// 		.possible_values(&["sRGB", "RGB", "luminance", "luma"])
-	// 		.takes_value(true)
-	// 	)
-	// 	.arg(Arg::with_name("border")
-	// 		.help("Sets which channels will be included in psnr calculation")
-	// 		.short("b")
-	// 		.long("border")
-	// 		.value_name("BORDER")
-	// 		.takes_value(true)
-	// 		.validator(|s| {
-	// 			s.parse::<usize>().map(|x| ()).map_err(|int_err| format!("border parameter must be a valid unsized integer: {}", int_err))
-	// 		})
-	// 	))
+	.subcommand(SubCommand::with_name("psnr")
+		.about("Print the PSNR value from the differences between the two images")
+		.arg(Arg::with_name("IMAGE1")
+			.required(true)
+			.index(1)
+			.help("PSNR is calculated using the difference between this image and IMAGE2")
+		)
+		.arg(Arg::with_name("IMAGE2")
+			.required(true)
+			.index(2)
+			.help("PSNR is calculated using the difference between this image and IMAGE1")
+		)
+	)
 	.get_matches();
 	
 	if let Some(sub_m) = app_m.subcommand_matches("train") {
-		train(sub_m);
+		train(sub_m).unwrap();
 	} if let Some(sub_m) = app_m.subcommand_matches("downsample") {
-		downsample(sub_m);
-	// } if let Some(sub_m) = app_m.subcommand_matches("psnr") {
-	// 	psnr(sub_m);
+		downsample(sub_m).unwrap();
+	} if let Some(sub_m) = app_m.subcommand_matches("psnr") {
+		psnr(sub_m);
 	} else {
-		upscale(&app_m);
+		upscale(&app_m).unwrap();
 	}
 	
 }
 
-fn downsample(app_m: &ArgMatches){
 
-	let (params, mut graph) = match app_m.value_of("COLOURSPACE") {
+#[derive(Debug, Serialize, Deserialize)]
+struct NetworkDescription {
+	factor: usize,
+	parameters: Vec<ArrayD<f32>>,
+}
+
+
+fn load_network(data: &[u8]) -> NetworkDescription {
+	let decoded: NetworkDescription = deserialize(data).expect("NetworkDescription decoding failed");
+	decoded
+}
+
+fn save_network(desc: NetworkDescription) -> Vec<u8> {
+	let encoded: Vec<u8> = serialize(&desc, Infinite).expect("NetworkDescription encoding failed");
+	encoded
+}
+
+fn downsample(app_m: &ArgMatches) -> Result<()>{
+
+	let factor = match app_m.value_of("FACTOR") {
+		Some(string) => string.parse::<usize>().expect("Factor argument must be an integer"),
+		_ => unreachable!(),
+	};
+
+	let graph = match app_m.value_of("COLOURSPACE") {
 		Some("RGB") | None => {
 			print!("Downsampling using average pooling of linear RGB values...");
-			(Vec::new(), downsample_lin_net(FACTOR))},
+			downsample_lin_net(factor)?},
 		Some("sRGB")=> {
 			print!("Downsampling using average pooling of sRGB values...");
-			(Vec::new(), downsample_srgb_net(FACTOR))},
+			downsample_srgb_net(factor)?},
 		_ => unreachable!(),
 	};
 
 	stdout().flush().ok();
 
-	assert_eq!(params.len(), graph.num_params(), "Parameters selected do not have the size required by the neural net. Ensure that the same sample factor is used for upsampling and training", );
-
 	let input_image = image::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).expect("Error opening input image file.");
 
 	let out_path = Path::new(app_m.value_of("OUTPUT_FILE").expect("No output file given?"));
 
-	let mut input = NodeData::new_blank(DataShape::new(CHANNELS, &[input_image.dimensions().0 as usize, input_image.dimensions().1 as usize], 1));
+	let input = image_to_data(&input_image);
+	let shape = input.shape().to_vec();
+	let input = input.into_shape(IxDyn(&[1, shape[0], shape[1], shape[2]])).unwrap();
+	let input_id = graph.node_id("input")?.value_id();
+	let output_id = graph.node_id("output")?.value_id();
+	let mut subgraph = graph.subgraph(&[input_id.clone()], &[output_id.clone()])?;
+	let result = subgraph.execute(vec![input]).expect("Could not execute downsampling graph");
 
-	img_to_data(&mut input.values, &input_image);
-	let output = graph.forward(1, vec![input], &params).remove(0);
+	let output = result.get(&output_id).unwrap();
 
 	print!(" Writing file...");
 	stdout().flush().ok();
-	data_to_img(output).to_rgba().save(out_path).expect("Could not write output file");
+	data_to_image(output.subview(Axis(0), 0)).to_rgba().save(out_path).expect("Could not write output file");
 	
-	println!(" Done");	
+	println!(" Done");
+	Ok(())
 }
 
-fn upscale(app_m: &ArgMatches){
-		
+fn upscale(app_m: &ArgMatches) -> Result<()>{
+	let factor = match app_m.value_of("BILINEAR_FACTOR") {
+		Some(string) => string.parse::<usize>().expect("Factor argument must be an integer"),
+		_ => 3,
+	};
+
 	//-- Sort out parameters and graph
-	let (params, mut graph) = if let Some(file_str) = app_m.value_of("CUSTOM") {
+	let (params, graph) = if let Some(file_str) = app_m.value_of("CUSTOM") {
 		let mut param_file = File::open(Path::new(file_str)).expect("Error opening parameter file");
 		let mut data = Vec::new();
 		param_file.read_to_end(&mut data).expect("Reading parameter file failed");
 		print!("Upsampling using custom neural net parameters...");
-		(<Vec<f32>>::decode::<u32>(&data).expect("ByteVec conversion failed"), sr_net(FACTOR, None))
+		let network_desc = load_network(&data);
+		(network_desc.parameters, inference_sr_net(network_desc.factor)?)
 	} else {
 		match app_m.value_of("PARAMETERS") {
 			Some("natural") | None => {
 				print!("Upsampling using natural neural net parameters...");
-				(<Vec<f32>>::decode::<u32>(L1NATURAL_PARAMS).expect("ByteVec conversion failed"), sr_net(FACTOR, None))},
+				let network_desc = load_network(L1NATURAL_PARAMS);
+				(network_desc.parameters, inference_sr_net(network_desc.factor)?)},
 			Some("anime")=> {
 				print!("Upsampling using anime neural net parameters...");
-				(<Vec<f32>>::decode::<u32>(L1ANIME_PARAMS).expect("ByteVec conversion failed"), sr_net(FACTOR, None))},
+				let network_desc = load_network(L1ANIME_PARAMS);
+				(network_desc.parameters, inference_sr_net(network_desc.factor)?)},
 			Some("faces")=> {
 				print!("Upsampling using faces neural net parameters...");
-				(<Vec<f32>>::decode::<u32>(L1FACES_PARAMS).expect("ByteVec conversion failed"), sr_net(FACTOR, None))},
+				let network_desc = load_network(L1FACES_PARAMS);
+				(network_desc.parameters, inference_sr_net(network_desc.factor)?)},
 			Some("bilinear") => {
 				print!("Upsampling using bilinear interpolation...");
-				(Vec::new(), bilinear_net(FACTOR))},
+				(Vec::new(), bilinear_net(factor)?)},
 			_ => unreachable!(),
 		}
 	};
 	stdout().flush().ok();
 
-	// TODO: ensure factor argument requires custom neural net file argument.
-	assert_eq!(params.len(), graph.num_params(), "Parameters selected do not have the size required by the neural net. Ensure that the same sample factor is used for upsampling and training", );
-
 	let input_image = image::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).expect("Error opening input image file.");
 
 	let out_path = Path::new(app_m.value_of("OUTPUT_FILE").expect("No output file given?"));
 
-	let mut input = NodeData::new_blank(DataShape::new(CHANNELS, &[input_image.dimensions().0 as usize, input_image.dimensions().1 as usize], 1));
+	let input = image_to_data(&input_image);
+	let shape = input.shape().to_vec();
+	let input = input.into_shape(IxDyn(&[1, shape[0], shape[1], shape[2]])).unwrap();
 
-	img_to_data(&mut input.values, &input_image);
-	let output = graph.forward(1, vec![input], &params).remove(0);
+	let mut input_vec = vec![input];
+	input_vec.extend(params);
+	let input_id = graph.node_id("input")?.value_id();
+	let param_ids: Vec<_> = graph.parameter_ids().keys().map(|node_id| node_id.value_id()).collect();
+	let mut subgraph_inputs = vec![input_id];
+	subgraph_inputs.extend( param_ids);
+	let output_id = graph.node_id("output")?.value_id();
+	let mut subgraph = graph.subgraph(&subgraph_inputs, &[output_id.clone()])?;
+	let result = subgraph.execute(input_vec).expect("Could not execute upsampling graph");
+
+	let output = result.get(&output_id).unwrap();
 
 	print!(" Writing file...");
 	stdout().flush().ok();
-	data_to_img(output).to_rgba().save(out_path).expect("Could not write output file");
+	data_to_image(output.subview(Axis(0), 0)).to_rgba().save(out_path).expect("Could not write output file");
 	
 	println!(" Done");
+	Ok(())
 }
 
 
-fn train(app_m: &ArgMatches){
-	
-	let srgb_downscale = app_m.is_present("SRGB_DOWNSCALE");
-	if srgb_downscale {
-		println!("Downsampling for training performed in sRGB");
-	} else {
-		println!("Downsampling for training performed in linear RGB");
-	}
+fn train(app_m: &ArgMatches) -> Result<()> {
 
-	let (power, scale) = if app_m.is_present("L1_LOSS") {
-		println!("Training using the L1 reconstruction loss");
-		(1.0, 0.01) // L1, smoothed
-	} else {
-		println!("Training using the L2 reconstruction loss");
-		(2.0, 1.0) // L2
+	let srgb_downscale = match app_m.value_of("DOWNSCALE_COLORSPACE") {
+		Some("sRGB") | None => true,
+		Some("RGB") => false,
+		_ => unreachable!(),
+	};
+	
+	let (power, scale) = match app_m.value_of("TRAINING_LOSS") {
+		Some("L1") | None => (1.0, 1.0/255.0), // L1, smoothed
+		Some("L2") => (2.0, 1.0/255.0), // L2
+		_ => unreachable!(),
 	};
 
-	let mut g = sr_net(FACTOR, Some((1e-6, srgb_downscale, power, scale))); // at 1e-3 the error was 1e-1, at 1e-6 err is 1e-4
-	let recurse = app_m.is_present("RECURSE_SUBFOLDERS");
-	let training_set = ImageFolderSupplier::<ShuffleRandom>::new(Path::new(app_m.value_of("TRAINING_FOLDER").expect("No training folder?")), recurse, Cropping::Random{width:192, height:192});
-	let mut training_set = Buffer::new(training_set, 128);
+	let lr = match app_m.value_of("LEARNING_RATE") {
+		None => 1e-2,
+		Some(string) => string.parse::<f32>().expect("Factor argument must be a numeric value"),
+	};
 
-	let start_params = if let Some(param_str) = app_m.value_of("START_PARAMETERS") {
+	let mut factor_option = None;
+	match app_m.value_of("FACTOR") {
+		Some(string) => factor_option = Some(string.parse::<usize>().expect("Factor argument must be an integer")),
+		_ => {},
+	}
+
+	let mut params_option = None;
+	if let Some(param_str) = app_m.value_of("START_PARAMETERS") {
 		let mut param_file = File::open(Path::new(param_str)).expect("Error opening start parameter file");
 		let mut data = Vec::new();
 		param_file.read_to_end(&mut data).expect("Reading start parameter file failed");
-		<Vec<f32>>::decode::<u32>(&data).expect("ByteVec conversion failed")
-	} else {
-		g.init_params()
-	};
+		let network_desc = load_network(&data);
+		params_option = Some(network_desc.parameters);
+		factor_option = Some(network_desc.factor);
+	}
 
-	let mut solver = Cain::new(&mut g)
-		.num_subbatches(4)
-		.target_err(0.9)
-		.subbatch_increase_damping(0.25)//25)
-		.subbatch_decrease_damping(0.125)//125)
-		.initial_subbatch_size(8.0)
-		.rate_adapt_coefficient(1.0)
-		.aggression(0.5)
-		.momentum(0.95)
-		.max_subbatch_size(8)
-		.initial_learning_rate(1.0e-3)
-		.finish();
-		
+	let factor = factor_option.unwrap_or(3);
+
+	let graph = training_sr_net(factor, 1e-3, power, scale, srgb_downscale)?;
+	
+	let recurse = app_m.is_present("RECURSE_SUBFOLDERS");
+	let batch_size = 4;
+	let mut training_stream = ImageFolder::new(app_m.value_of("TRAINING_FOLDER").expect("No training folder?"), recurse)
+		.crop(0, &[48*factor, 48*factor, 3], Cropping::Random)
+		.shuffle_random()
+		.batch(batch_size)
+		.buffered(16);
+	
+	// let mut solver = Emwa2::new(&graph)?
+	// 	.start_rate(lr/batch_size as f32)
+	// 	.rate_bounds(lr/100.0/batch_size as f32, lr*100.0/batch_size as f32)
+	// 	.target_noise(1.0)
+	// 	.rate_adaption(1.1);
+
+	let mut solver = Adam::new(&graph)?
+		.rate(lr / batch_size as f32)
+		.beta1(0.95)
+		.beta2(0.995)
+		.bias_correct(false);
+
+	let params = params_option.unwrap_or_else(||{
+		graph.initialise_nodes(solver.parameters()).expect("Could not initialise parameters")
+	});
+
 	let param_file_path = Path::new(app_m.value_of("PARAMETER_FILE").expect("No parameter file?")).to_path_buf();
 
-	solver.add_step_callback(move |data|{
-		if data.step_count % 100 == 0 {
+	add_validation(app_m, &mut solver, recurse, factor, srgb_downscale)?;
+
+	let mut step_count = 0;
+	solver.add_callback(move |data|{
+		if step_count % 100 == 0 {
 			let mut parameter_file = File::create(&param_file_path).expect("Could not make parameter file");
-			let bytes = data.params.encode::<u32>().expect("ByteVec conversion failed");
+			let bytes = save_network(NetworkDescription{factor: factor, parameters: data.params.to_vec()});
 			parameter_file.write_all(&bytes).expect("Could not save to parameter file");
 		}
+		println!("step {}\terr:{}\tchange:{}", step_count, data.err/batch_size as f32, data.change_norm);
+		step_count += 1;
 		CallbackSignal::Continue
 	});
 
+	solver.add_boxed_callback(max_steps(10_000_000));
 
-	if let Some(val_str) = app_m.value_of("VALIDATION_FOLDER"){ // Add occasional test set evaluation as solver callback
-		let mut g2 = sr_net(FACTOR, Some((0.0, srgb_downscale, power, scale)));
-		let validation_set = ImageFolderSupplier::<Sequential>::new(Path::new(val_str), recurse, Cropping::None);
-		
-		let n = if let Some(val_max) = app_m.value_of("VAL_MAX"){
-			cmp::min(validation_set.epoch_size() as usize, val_max.parse::<usize>().expect("-val_max N must be a positive integer"))
-		} else {
-			validation_set.epoch_size() as usize
-		};
-		let mut validation_set = Buffer::new(validation_set, n);
+	println!("Beginning Training");
+	solver.optimise_from(&mut training_stream, params)?;	
+	println!("Done");
+	Ok(())
+}
 
-		solver.add_step_callback(move |data|{
+/// Add occasional test set evaluation as solver callback
+fn add_validation(app_m: &ArgMatches, solver: &mut Opt,  recurse: bool, factor: usize, srgb_downscale: bool) -> Result<()>{
+	if let Some(val_folder) = app_m.value_of("VALIDATION_FOLDER"){ 
+		let power = 2.0;
+		let scale = 1.0;
+		let mut validation_graph = training_sr_net(factor, 0.0, power, scale, srgb_downscale)?;
 
-			if data.step_count % 100 == 0 || data.step_count == 1{
+		let input_ids: Vec<_> = iter::once(&validation_graph.node_id("training_input")?).chain(solver.parameters()).map(|node_id| node_id.value_id()).collect();
+		let output_id = validation_graph.node_id("output")?.value_id();
+		let mut validation_subgraph = validation_graph.subgraph(&input_ids, &[output_id.clone()])?;
+
+		let validation_set =ImageFolder::new(val_folder, recurse);
+		let epoch_size = validation_set.length();
+		let mut validation_stream = validation_set
+		.shuffle_random()
+		.batch(1)
+		.buffered(8);
+
+		let n: usize = app_m.value_of("VAL_MAX").map(|val_max|{
+			cmp::min(epoch_size, val_max.parse::<usize>().expect("-val_max N must be a positive integer"))
+		}).unwrap_or(epoch_size);
+
+		let mut step_count = 0;
+		solver.add_boxed_callback(Box::new(move |data|{
+
+			if step_count % 100 == 0 {
 
 				let mut err_sum = 0.0;
 				let mut y_err_sum = 0.0;
@@ -335,32 +441,35 @@ fn train(app_m: &ArgMatches){
 				let mut psnr_sum = 0.0;
 				let mut y_psnr_sum = 0.0;
 
-
 				for _ in 0..n {
-					let (input, _training_input) = validation_set.next_n(1);
-					let input_copy = input[0].clone();
-					//let pixels = input[0].shape.flat_size_single() as f32;
-					let output = g2.forward(1, input, data.params).remove(0);
-					
+					let mut training_input = validation_stream.next();
+					let training_input_copy = training_input[0].clone();
+					training_input.extend(data.params.to_vec());
+
+					let result = validation_subgraph.execute(training_input).expect("Could not execute upsampling graph");
+					let output = result.get(&output_id).unwrap();
+
 					let mut err = 0.0;
 					let mut y_err = 0.0;
 					let mut pix = 0.0f32;
-					for (o, i) in output.values.chunks(CHANNELS).zip(input_copy.values.chunks(CHANNELS)){
-						let dr = o[0].max(0.0).min(1.0)-i[0].max(0.0).min(1.0);
-						let dg = o[1].max(0.0).min(1.0)-i[1].max(0.0).min(1.0);
-						let db = o[2].max(0.0).min(1.0)-i[2].max(0.0).min(1.0);
 
+					Zip::from(output.genrows())
+						.and(training_input_copy.genrows())
+						.apply(|o, i| {
+							// let dr = (o[0].max(0.0).min(1.0)*255.0).round()/255.0 - i[0].max(0.0).min(1.0);
+							// let dg = (o[1].max(0.0).min(1.0)*255.0).round()/255.0 - i[1].max(0.0).min(1.0);
+							// let db = (o[2].max(0.0).min(1.0)*255.0).round()/255.0 - i[2].max(0.0).min(1.0);
+							let dr = o[0].max(0.0).min(1.0) - i[0].max(0.0).min(1.0);
+							let dg = o[1].max(0.0).min(1.0) - i[1].max(0.0).min(1.0);
+							let db = o[2].max(0.0).min(1.0) - i[2].max(0.0).min(1.0);
+							//let y_diff = dr*0.299 + dg*0.587 + db*0.114; // 601
+							let y_diff = dr*0.2126 + dg*0.7152 + db*0.0722; // BT.709
 
-						//let yo = LinearToSrgbFunc::activ(SrgbToLinearFunc::activ(o[0].max(0.0).min(1.0)).0*0.212655 + SrgbToLinearFunc::activ(o[1].max(0.0).min(1.0)).0*0.715158 + SrgbToLinearFunc::activ(o[2].max(0.0).min(1.0)).0*0.072187).0;
-						//let yi = LinearToSrgbFunc::activ(SrgbToLinearFunc::activ(i[0].max(0.0).min(1.0)).0*0.212655 + SrgbToLinearFunc::activ(i[1].max(0.0).min(1.0)).0*0.715158 + SrgbToLinearFunc::activ(i[2].max(0.0).min(1.0)).0*0.072187).0;
+							y_err += y_diff*y_diff;//(yo - yi)*(yo - yi);
+							err += (dr*dr + dg*dg + db*db)/3.0; // R G B
+							pix += 1.0;
+						});
 
-
-						let y_diff = dr*0.299 + dg*0.587 + db*0.114;
-
-						y_err += y_diff*y_diff;//(yo - yi)*(yo - yi);
-						err += (dr*dr + dg*dg + db*db)/3.0; // R G B
-						pix += 1.0;
-					}
 					psnr_sum += -10.0*(err/pix).log10();
 					y_psnr_sum += -10.0*(y_err/pix).log10();
 
@@ -375,19 +484,51 @@ fn train(app_m: &ArgMatches){
 				let y_psnr = -10.0*(y_err_sum/pix_sum).log10();
 				println!("Validation PixAvgPSNR:\t{}\tPixAvgY_PSNR:\t{}\tImgAvgPSNR:\t{}\tImgAvgY_PSNR:\t{}", psnr, y_psnr, psnr_sum, y_psnr_sum);
 			}
-
+			step_count += 1;
 			CallbackSignal::Continue
-		});
+		}));
 	}
-
-	solver.add_boxed_step_callback(max_evals(10_000_000));
-
-	println!("Beginning Training");
-	solver.optimise_from(&mut training_set, start_params);	
-	println!("Done");
+	Ok(())
 }
 
-// fn psnr(app_m: &ArgMatches){
+fn psnr(app_m: &ArgMatches){
+	let image1 = image::open(Path::new(app_m.value_of("IMAGE1").expect("No input file given?"))).expect("Error opening image1 file.");
+	let image2 = image::open(Path::new(app_m.value_of("IMAGE2").expect("No input file given?"))).expect("Error opening image2 file.");
 
+	let image1 = image_to_data(&image1);
+	let image2 = image_to_data(&image2);
 
-// }
+	if image1.shape() != image2.shape() {
+		println!("Image shapes will be cropped to the areas which overlap");
+	}
+
+	let min_height = cmp::min(image1.shape()[0], image2.shape()[0]);
+	let min_width = cmp::min(image1.shape()[1], image2.shape()[2]);
+
+	let slice_arg: [Si; 3] = [Si(0, Some(min_height as isize), 1), Si(0, Some(min_width as isize), 1), Si(0, Some(3), 1)];
+	let image1 = image1.slice(&slice_arg);
+	let image2 = image2.slice(&slice_arg);
+
+	let mut err = 0.0;
+	let mut y_err = 0.0;
+	let mut pix = 0.0f32;
+
+	Zip::from(image1.genrows())
+		.and(image2.genrows())
+		.apply(|o, i| {
+			let dr = o[0].max(0.0).min(1.0)-i[0].max(0.0).min(1.0);
+			let dg = o[1].max(0.0).min(1.0)-i[1].max(0.0).min(1.0);
+			let db = o[2].max(0.0).min(1.0)-i[2].max(0.0).min(1.0);
+			//let y_diff = dr*0.299 + dg*0.587 + db*0.114; // 601
+			let y_diff = dr*0.2126 + dg*0.7152 + db*0.0722; // BT.709
+
+			y_err += y_diff*y_diff;//(yo - yi)*(yo - yi);
+			err += (dr*dr + dg*dg + db*db)/3.0; // R G B
+			pix += 1.0;
+		});
+
+	let psnr = -10.0*(err/pix).log10();
+	let y_psnr = -10.0*(y_err/pix).log10();
+
+	println!("sRGB PSNR: {}\tLuma PSNR:{}", psnr, y_psnr);
+}
