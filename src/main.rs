@@ -116,7 +116,6 @@ fn main() {
 			.takes_value(false)
 		)
 		.arg(Arg::with_name("START_PARAMETERS")
-			.conflicts_with("FACTOR")
 			.short("s")
 			.long("start")
 			.help("Start training from known parameters loaded from this .rsr file rather than random initialisation")
@@ -351,6 +350,11 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		let mut data = Vec::new();
 		param_file.read_to_end(&mut data).expect("Reading start parameter file failed");
 		let network_desc = load_network(&data);
+		if let Some(factor) = factor_option {
+			if factor != network_desc.factor {
+				println!("Using factor from parameter file ({}) rather than factor from argument ({})", network_desc.factor, factor);
+			}
+		}
 		params_option = Some(network_desc.parameters);
 		factor_option = Some(network_desc.factor);
 	}
