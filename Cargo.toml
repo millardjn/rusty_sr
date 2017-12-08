@@ -11,5 +11,7 @@ ndarray = {version = "0.10", features = ["serde-1"] }
 serde = "1"
 serde_derive = "1"
 bincode = "0.9.2"
-alumina = { version = "0.2.0" , features = ["images"]}
-
+xz2 = "0.1"
+byteorder = "1"
+#alumina = { version = "0.2.0" , features = ["images"]}
+alumina = { path = "D:/Repositories/alumina"}

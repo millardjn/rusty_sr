@@ -13,6 +13,7 @@ use alumina::ops::activ::srgb::{SrgbToLinear, LinearToSrgb};
 use alumina::ops::shape::shape_constraint::ShapeConstraint;
 use alumina::ops::regularisation::l2::L2;
 use alumina::ops::loss::robust::Robust;
+use alumina::ops::fill::coord::Coord;
 
 use alumina::graph::{GraphDef, NodeTag, Result};
 
@@ -35,7 +36,7 @@ pub fn training_sr_net(factor: usize, regularisation: f32, loss_power: f32, loss
 
 	if regularisation != 0.0 {
 		for node_id in g.node_ids(NodeTag::Parameter).keys() {
-			L2::new(node_id).multiplier(regularisation);
+			L2::new(node_id).multiplier(regularisation).add_to(&mut g, tag![])?;
 		}
 	}	
 
@@ -70,6 +71,9 @@ pub fn sr_net_base(factor: usize) -> Result<GraphDef> {
 
 	active_nodes.push(g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "input", tag![])?);
 
+	let coord = g.new_node(shape![Unknown, Unknown, Unknown, 4], "coord", tag![])?;
+	Coord::new(&coord, &[1, 2]).input(&active_nodes[0]).add_to(&mut g, tag![])?;
+
 	let hidden_layers = 13usize;//29usize; // 2^x-1 if the prediction layer should connect directly to the input
 	let hidden_layer_channels = 32;
 
@@ -91,7 +95,7 @@ pub fn sr_net_base(factor: usize) -> Result<GraphDef> {
 			Conv::new(&active_nodes[active_nodes.len() - jump], &new_conv_node, &[3, 3])
 				.init(Conv::msra(init_weight/jumps.len() as f32)).add_to(&mut g, tag![])?;
 		}
-
+		Conv::new(&coord, &new_conv_node, &[1, 1]).init(Conv::msra(0.01)).add_to(&mut g, tag![])?;
 		Bias::new(&new_conv_node).add_to(&mut g, tag![])?;
 
 		// add activation only for hidden layers

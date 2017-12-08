@@ -8,7 +8,8 @@ extern crate ndarray;
 extern crate serde_derive;
 extern crate serde;
 extern crate bincode;
-
+extern crate xz2;
+extern crate byteorder;
 
 
 mod network;
@@ -25,6 +26,8 @@ use clap::{Arg, App, SubCommand, AppSettings, ArgMatches};
 use network::*;
 
 use ndarray::{ArrayD, Zip, IxDyn, Si, Axis};
+use byteorder::{LittleEndian, ByteOrder};
+use xz2::read::{XzEncoder, XzDecoder};
 
 use alumina::opt::adam::Adam;
 use alumina::data::image_folder::{ImageFolder, image_to_data, data_to_image};
@@ -59,7 +62,7 @@ fn main() {
 		.long("parameters")
 		.value_name("PARAMETERS")
 		.possible_values(&["natural", "anime", "faces", "bilinear"])
-		.takes_value(true)
+		.empty_values(false)
 	)
 	.arg(Arg::with_name("CUSTOM")
 		.conflicts_with("PARAMETERS")
@@ -67,13 +70,13 @@ fn main() {
 		.long("custom")
 		.value_name("PARAMETER_FILE")
 		.help("Sets a custom parameter file (.rsr) to use with the neural net")
-		.takes_value(true)
+		.empty_values(false)
 	)
 	.arg(Arg::with_name("BILINEAR_FACTOR")
 		.short("f")
 		.long("factor")
 		.help("The integer upscaling factor used if bilinear upscaling is performed. Default 3")
-		.takes_value(true)
+		.empty_values(false)
 	)
 	.subcommand(SubCommand::with_name("train")
 		.about("Train a new set of neural parameters on your own dataset")
@@ -91,7 +94,13 @@ fn main() {
 			.short("R")
 			.long("rate")
 			.help("The learning rate used by the Adam optimiser. Default: 1e-2")
-			.takes_value(true)
+			.empty_values(false)
+		)
+		.arg(Arg::with_name("QUANTISE")
+			.short("q")
+			.long("quantise")
+			.help("Quantise the weights by zeroing the lowest 2 bytes of each. Reduces parameter file size.")
+			.takes_value(false)
 		)
 		.arg(Arg::with_name("TRAINING_LOSS")
 	 		.help("Selects whether the neural net learns to minimise the L1 or L2 loss. Default: L1")
@@ -99,7 +108,7 @@ fn main() {
 	 		.long("loss")
 	 		.value_name("LOSS")
 	 		.possible_values(&["L1", "L2"])
-	 		.takes_value(true)
+	 		.empty_values(false)
 	 	)
 		.arg(Arg::with_name("DOWNSCALE_COLOURSPACE")
 	 		.help("Colorspace in which to perform downsampling. Default: sRGB")
@@ -107,7 +116,7 @@ fn main() {
 	 		.long("colourspace")
 	 		.value_name("COLOURSPACE")
 	 		.possible_values(&["sRGB", "RGB"])
-	 		.takes_value(true)
+	 		.empty_values(false)
 	 	)
 		.arg(Arg::with_name("RECURSE_SUBFOLDERS")
 			.short("r")
@@ -119,19 +128,19 @@ fn main() {
 			.short("s")
 			.long("start")
 			.help("Start training from known parameters loaded from this .rsr file rather than random initialisation")
-			.takes_value(true)
+			.empty_values(false)
 		)
 		.arg(Arg::with_name("FACTOR")
 			.short("f")
 			.long("factor")
 			.help("The integer upscaling factor of the network the be trained. Default: 3")
-			.takes_value(true)
+			.empty_values(false)
 		)
 		.arg(Arg::with_name("VALIDATION_FOLDER")
 			.short("v")
 			.long("val_folder")
 			.help("Images from this folder(or sub-folders) will be used to evaluate training progress")
-			.takes_value(true)
+			.empty_values(false)
 		)
 		.arg(Arg::with_name("VAL_MAX")
 			.requires("VALIDATION_FOLDER")
@@ -139,7 +148,7 @@ fn main() {
 			.long("val_max")
 			.value_name("N")
 			.help("Set upper limit on number of images used for each validation pass")
-			.takes_value(true)
+			.empty_values(false)
 		)
 	)
 	.subcommand(SubCommand::with_name("downsample")
@@ -165,7 +174,7 @@ fn main() {
 	 		.long("colourspace")
 	 		.value_name("COLOURSPACE")
 	 		.possible_values(&["sRGB", "RGB"])
-	 		.takes_value(true)
+	 		.empty_values(false)
 	 	)
 	)
 	.subcommand(SubCommand::with_name("psnr")
@@ -204,13 +213,52 @@ struct NetworkDescription {
 
 
 fn load_network(data: &[u8]) -> NetworkDescription {
-	let decoded: NetworkDescription = deserialize(data).expect("NetworkDescription decoding failed");
-	decoded
+	let decompressed = XzDecoder::new(data).bytes().collect::<::std::result::Result<Vec<_>, _>>().unwrap();
+	let unshuffled = unshuffle(&decompressed, 4);
+	let deserialized: NetworkDescription = deserialize(&unshuffled).expect("NetworkDescription decoding failed");
+	deserialized
 }
 
-fn save_network(desc: NetworkDescription) -> Vec<u8> {
-	let encoded: Vec<u8> = serialize(&desc, Infinite).expect("NetworkDescription encoding failed");
-	encoded
+fn save_network(mut desc: NetworkDescription, quantize: bool) -> Vec<u8> {
+	if quantize {
+		for arr in &mut desc.parameters {
+			for e in arr.iter_mut() {
+				let mut bytes = [0; 4];
+				LittleEndian::write_f32(&mut bytes, *e);
+				bytes[0] = 0;
+				bytes[1] = 0;
+				*e = LittleEndian::read_f32(&bytes);
+			}
+		}
+	}
+	let serialized: Vec<u8> = serialize(&desc, Infinite).expect("NetworkDescription encoding failed");
+	let shuffled = shuffle(&serialized, 4);
+	let compressed = XzEncoder::new(shuffled.as_slice(), 9).bytes().collect::<::std::result::Result<Vec<_>, _>>().unwrap();
+	compressed
+}
+
+fn unshuffle(data: &[u8], stride: usize) -> Vec<u8> {
+	let mut vec = vec![0; data.len()];
+	let mut inc = 0;
+	for offset in 0..stride {
+		for i in 0..(data.len()-offset)/stride {
+			vec[offset + i*stride] = data[inc];
+			inc += 1;
+		}
+	}
+	debug_assert_eq!(inc, data.len());
+	vec
+}
+
+fn shuffle(data: &[u8], stride: usize) -> Vec<u8> {
+	let mut vec = Vec::with_capacity(data.len());
+	for offset in 0..stride {
+		for i in 0..(data.len()-offset)/stride {
+			vec.push(data[offset + i*stride])
+		}
+	}
+	debug_assert_eq!(vec.len(), data.len());
+	vec
 }
 
 fn downsample(app_m: &ArgMatches) -> Result<()>{
@@ -335,8 +383,16 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 
 	let lr = match app_m.value_of("LEARNING_RATE") {
 		None => 1e-2,
-		Some(string) => string.parse::<f32>().expect("Factor argument must be a numeric value"),
+		Some(string) => string.parse::<f32>().expect("Learning rate argument must be a numeric value"),
 	};
+
+	let quantize = app_m.is_present("QUANTISE");
+
+	let recurse = app_m.is_present("RECURSE_SUBFOLDERS");
+
+	let training_folder = app_m.value_of("TRAINING_FOLDER").expect("No training folder?");
+
+	let param_file_path = Path::new(app_m.value_of("PARAMETER_FILE").expect("No parameter file?")).to_path_buf();
 
 	let mut factor_option = None;
 	match app_m.value_of("FACTOR") {
@@ -361,21 +417,14 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 
 	let factor = factor_option.unwrap_or(3);
 
-	let graph = training_sr_net(factor, 1e-3, power, scale, srgb_downscale)?;
+	let graph = training_sr_net(factor, 1e-6, power, scale, srgb_downscale)?;
 	
-	let recurse = app_m.is_present("RECURSE_SUBFOLDERS");
 	let batch_size = 4;
-	let mut training_stream = ImageFolder::new(app_m.value_of("TRAINING_FOLDER").expect("No training folder?"), recurse)
+	let mut training_stream = ImageFolder::new(training_folder, recurse)
 		.crop(0, &[48*factor, 48*factor, 3], Cropping::Random)
 		.shuffle_random()
 		.batch(batch_size)
 		.buffered(16);
-	
-	// let mut solver = Emwa2::new(&graph)?
-	// 	.start_rate(lr/batch_size as f32)
-	// 	.rate_bounds(lr/100.0/batch_size as f32, lr*100.0/batch_size as f32)
-	// 	.target_noise(1.0)
-	// 	.rate_adaption(1.1);
 
 	let mut solver = Adam::new(&graph)?
 		.rate(lr / batch_size as f32)
@@ -387,7 +436,6 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		graph.initialise_nodes(solver.parameters()).expect("Could not initialise parameters")
 	});
 
-	let param_file_path = Path::new(app_m.value_of("PARAMETER_FILE").expect("No parameter file?")).to_path_buf();
 
 	add_validation(app_m, &mut solver, recurse, factor, srgb_downscale)?;
 
@@ -395,7 +443,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 	solver.add_callback(move |data|{
 		if step_count % 100 == 0 {
 			let mut parameter_file = File::create(&param_file_path).expect("Could not make parameter file");
-			let bytes = save_network(NetworkDescription{factor: factor, parameters: data.params.to_vec()});
+			let bytes = save_network(NetworkDescription{factor: factor, parameters: data.params.to_vec()}, quantize);
 			parameter_file.write_all(&bytes).expect("Could not save to parameter file");
 		}
 		println!("step {}\terr:{}\tchange:{}", step_count, data.err/batch_size as f32, data.change_norm);
@@ -466,8 +514,8 @@ fn add_validation(app_m: &ArgMatches, solver: &mut Opt,  recurse: bool, factor: 
 							let dr = o[0].max(0.0).min(1.0) - i[0].max(0.0).min(1.0);
 							let dg = o[1].max(0.0).min(1.0) - i[1].max(0.0).min(1.0);
 							let db = o[2].max(0.0).min(1.0) - i[2].max(0.0).min(1.0);
-							//let y_diff = dr*0.299 + dg*0.587 + db*0.114; // 601
-							let y_diff = dr*0.2126 + dg*0.7152 + db*0.0722; // BT.709
+							let y_diff = dr*0.299 + dg*0.587 + db*0.114; // 601
+							//let y_diff = dr*0.2126 + dg*0.7152 + db*0.0722; // BT.709
 
 							y_err += y_diff*y_diff;//(yo - yi)*(yo - yi);
 							err += (dr*dr + dg*dg + db*db)/3.0; // R G B
@@ -523,8 +571,8 @@ fn psnr(app_m: &ArgMatches){
 			let dr = o[0].max(0.0).min(1.0)-i[0].max(0.0).min(1.0);
 			let dg = o[1].max(0.0).min(1.0)-i[1].max(0.0).min(1.0);
 			let db = o[2].max(0.0).min(1.0)-i[2].max(0.0).min(1.0);
-			//let y_diff = dr*0.299 + dg*0.587 + db*0.114; // 601
-			let y_diff = dr*0.2126 + dg*0.7152 + db*0.0722; // BT.709
+			let y_diff = dr*0.299 + dg*0.587 + db*0.114; // 601
+			//let y_diff = dr*0.2126 + dg*0.7152 + db*0.0722; // BT.709
 
 			y_err += y_diff*y_diff;//(yo - yi)*(yo - yi);
 			err += (dr*dr + dg*dg + db*db)/3.0; // R G B
