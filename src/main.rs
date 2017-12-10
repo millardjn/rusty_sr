@@ -19,6 +19,7 @@ use std::path::Path;
 use std::io::{stdout, Write, Read};
 use std::cmp;
 use std::iter;
+use std::num::FpCategory;
 
 use bincode::{serialize, deserialize, Infinite};
 use clap::{Arg, App, SubCommand, AppSettings, ArgMatches};
@@ -42,7 +43,7 @@ const L1FACES_PARAMS: &'static [u8] = include_bytes!("res/L1SplineFaces.rsr");
 
 fn main() {
 	let app_m = App::new("Rusty SR")
-	.version("v0.1.1")
+	.version("v0.2.0")
 	.author("J. Millard <millard.jn@gmail.com>")
 	.about("A convolutional neural network trained to upscale images")
 	.settings(&[AppSettings::SubcommandsNegateReqs, AppSettings::VersionlessSubcommands])
@@ -99,7 +100,7 @@ fn main() {
 		.arg(Arg::with_name("QUANTISE")
 			.short("q")
 			.long("quantise")
-			.help("Quantise the weights by zeroing the lowest 2 bytes of each. Reduces parameter file size.")
+			.help("Quantise the weights by zeroing the lowest 2 bytes of each. Reduces parameter file size")
 			.takes_value(false)
 		)
 		.arg(Arg::with_name("TRAINING_LOSS")
@@ -134,6 +135,12 @@ fn main() {
 			.short("f")
 			.long("factor")
 			.help("The integer upscaling factor of the network the be trained. Default: 3")
+			.empty_values(false)
+		)
+		.arg(Arg::with_name("LOG_DEPTH")
+			.short("d")
+			.long("log_depth")
+			.help("There will be 2^(log_depth)-1 hidden layers in the network the be trained. Default: 4")
 			.empty_values(false)
 		)
 		.arg(Arg::with_name("VALIDATION_FOLDER")
@@ -208,6 +215,7 @@ fn main() {
 #[derive(Debug, Serialize, Deserialize)]
 struct NetworkDescription {
 	factor: usize,
+	log_depth: u32,
 	parameters: Vec<ArrayD<f32>>,
 }
 
@@ -220,9 +228,12 @@ fn load_network(data: &[u8]) -> NetworkDescription {
 }
 
 fn save_network(mut desc: NetworkDescription, quantize: bool) -> Vec<u8> {
-	if quantize {
-		for arr in &mut desc.parameters {
-			for e in arr.iter_mut() {
+	for arr in &mut desc.parameters {
+		for e in arr.iter_mut() {
+			if let FpCategory::Subnormal = e.classify(){
+				*e = 0.0;
+			}
+			if quantize {
 				let mut bytes = [0; 4];
 				LittleEndian::write_f32(&mut bytes, *e);
 				bytes[0] = 0;
@@ -231,6 +242,7 @@ fn save_network(mut desc: NetworkDescription, quantize: bool) -> Vec<u8> {
 			}
 		}
 	}
+	
 	let serialized: Vec<u8> = serialize(&desc, Infinite).expect("NetworkDescription encoding failed");
 	let shuffled = shuffle(&serialized, 4);
 	let compressed = XzEncoder::new(shuffled.as_slice(), 9).bytes().collect::<::std::result::Result<Vec<_>, _>>().unwrap();
@@ -241,7 +253,7 @@ fn unshuffle(data: &[u8], stride: usize) -> Vec<u8> {
 	let mut vec = vec![0; data.len()];
 	let mut inc = 0;
 	for offset in 0..stride {
-		for i in 0..(data.len()-offset)/stride {
+		for i in 0..(data.len()-offset+stride-1)/stride {
 			vec[offset + i*stride] = data[inc];
 			inc += 1;
 		}
@@ -253,7 +265,7 @@ fn unshuffle(data: &[u8], stride: usize) -> Vec<u8> {
 fn shuffle(data: &[u8], stride: usize) -> Vec<u8> {
 	let mut vec = Vec::with_capacity(data.len());
 	for offset in 0..stride {
-		for i in 0..(data.len()-offset)/stride {
+		for i in 0..(data.len()-offset+stride-1)/stride {
 			vec.push(data[offset + i*stride])
 		}
 	}
@@ -315,21 +327,21 @@ fn upscale(app_m: &ArgMatches) -> Result<()>{
 		param_file.read_to_end(&mut data).expect("Reading parameter file failed");
 		print!("Upsampling using custom neural net parameters...");
 		let network_desc = load_network(&data);
-		(network_desc.parameters, inference_sr_net(network_desc.factor)?)
+		(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)
 	} else {
 		match app_m.value_of("PARAMETERS") {
 			Some("natural") | None => {
 				print!("Upsampling using natural neural net parameters...");
 				let network_desc = load_network(L1NATURAL_PARAMS);
-				(network_desc.parameters, inference_sr_net(network_desc.factor)?)},
+				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
 			Some("anime")=> {
 				print!("Upsampling using anime neural net parameters...");
 				let network_desc = load_network(L1ANIME_PARAMS);
-				(network_desc.parameters, inference_sr_net(network_desc.factor)?)},
+				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
 			Some("faces")=> {
 				print!("Upsampling using faces neural net parameters...");
 				let network_desc = load_network(L1FACES_PARAMS);
-				(network_desc.parameters, inference_sr_net(network_desc.factor)?)},
+				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
 			Some("bilinear") => {
 				print!("Upsampling using bilinear interpolation...");
 				(Vec::new(), bilinear_net(factor)?)},
@@ -400,6 +412,12 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		_ => {},
 	}
 
+	let mut log_depth_option = None;
+	match app_m.value_of("LOG_DEPTH") {
+		Some(string) => log_depth_option = Some(string.parse::<u32>().expect("Log_depth argument must be an integer")),
+		_ => {},
+	}
+
 	let mut params_option = None;
 	if let Some(param_str) = app_m.value_of("START_PARAMETERS") {
 		let mut param_file = File::open(Path::new(param_str)).expect("Error opening start parameter file");
@@ -411,13 +429,21 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 				println!("Using factor from parameter file ({}) rather than factor from argument ({})", network_desc.factor, factor);
 			}
 		}
+		if let Some(log_depth) = log_depth_option {
+			if log_depth != network_desc.log_depth {
+				println!("Using log_depth from parameter file ({}) rather than log_depth from argument ({})", network_desc.log_depth, log_depth);
+			}
+		}
 		params_option = Some(network_desc.parameters);
 		factor_option = Some(network_desc.factor);
+		log_depth_option = Some(network_desc.log_depth);
 	}
 
 	let factor = factor_option.unwrap_or(3);
 
-	let graph = training_sr_net(factor, 1e-6, power, scale, srgb_downscale)?;
+	let log_depth = log_depth_option.unwrap_or(4);
+
+	let graph = training_sr_net(factor, log_depth, 1e-6, power, scale, srgb_downscale)?;
 	
 	let batch_size = 4;
 	let mut training_stream = ImageFolder::new(training_folder, recurse)
@@ -428,28 +454,27 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 
 	let mut solver = Adam::new(&graph)?
 		.rate(lr / batch_size as f32)
-		.beta1(0.95)
-		.beta2(0.995)
+		.beta1(0.9)
+		.beta2(0.99)
 		.bias_correct(false);
 
 	let params = params_option.unwrap_or_else(||{
 		graph.initialise_nodes(solver.parameters()).expect("Could not initialise parameters")
 	});
 
-
-	add_validation(app_m, &mut solver, recurse, factor, srgb_downscale)?;
-
 	let mut step_count = 0;
 	solver.add_callback(move |data|{
 		if step_count % 100 == 0 {
 			let mut parameter_file = File::create(&param_file_path).expect("Could not make parameter file");
-			let bytes = save_network(NetworkDescription{factor: factor, parameters: data.params.to_vec()}, quantize);
+			let bytes = save_network(NetworkDescription{factor: factor, log_depth: log_depth, parameters: data.params.to_vec()}, quantize);
 			parameter_file.write_all(&bytes).expect("Could not save to parameter file");
 		}
 		println!("step {}\terr:{}\tchange:{}", step_count, data.err/batch_size as f32, data.change_norm);
 		step_count += 1;
 		CallbackSignal::Continue
 	});
+
+	add_validation(app_m, &mut solver, recurse, factor, log_depth, srgb_downscale)?;
 
 	solver.add_boxed_callback(max_steps(10_000_000));
 
@@ -460,11 +485,11 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 }
 
 /// Add occasional test set evaluation as solver callback
-fn add_validation(app_m: &ArgMatches, solver: &mut Opt,  recurse: bool, factor: usize, srgb_downscale: bool) -> Result<()>{
+fn add_validation(app_m: &ArgMatches, solver: &mut Opt,  recurse: bool, factor: usize, log_depth: u32, srgb_downscale: bool) -> Result<()>{
 	if let Some(val_folder) = app_m.value_of("VALIDATION_FOLDER"){ 
 		let power = 2.0;
 		let scale = 1.0;
-		let mut validation_graph = training_sr_net(factor, 0.0, power, scale, srgb_downscale)?;
+		let mut validation_graph = training_sr_net(factor, log_depth, 0.0, power, scale, srgb_downscale)?;
 
 		let input_ids: Vec<_> = iter::once(&validation_graph.node_id("training_input")?).chain(solver.parameters()).map(|node_id| node_id.value_id()).collect();
 		let output_id = validation_graph.node_id("output")?.value_id();
@@ -473,9 +498,9 @@ fn add_validation(app_m: &ArgMatches, solver: &mut Opt,  recurse: bool, factor: 
 		let validation_set =ImageFolder::new(val_folder, recurse);
 		let epoch_size = validation_set.length();
 		let mut validation_stream = validation_set
-		.shuffle_random()
-		.batch(1)
-		.buffered(8);
+			.shuffle_random()
+			.batch(1)
+			.buffered(8);
 
 		let n: usize = app_m.value_of("VAL_MAX").map(|val_max|{
 			cmp::min(epoch_size, val_max.parse::<usize>().expect("-val_max N must be a positive integer"))
