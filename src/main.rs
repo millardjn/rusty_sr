@@ -143,6 +143,18 @@ fn main() {
 			.help("There will be 2^(log_depth)-1 hidden layers in the network the be trained. Default: 4")
 			.empty_values(false)
 		)
+		.arg(Arg::with_name("PATCH_SIZE")
+			.short("p")
+			.long("patch_size")
+			.help("The integer patch_size of the training input after downsampling. Default: 48")
+			.empty_values(false)
+		)
+		.arg(Arg::with_name("BATCH_SIZE")
+			.short("b")
+			.long("batch_size")
+			.help("The integer batch_size of the training input. Default: 4")
+			.empty_values(false)
+		)
 		.arg(Arg::with_name("VALIDATION_FOLDER")
 			.short("v")
 			.long("val_folder")
@@ -398,6 +410,18 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		Some(string) => string.parse::<f32>().expect("Learning rate argument must be a numeric value"),
 	};
 
+	let patch_size = match app_m.value_of("PATCH_SIZE") {
+		Some(string) => string.parse::<usize>().expect("Patch_size argument must be an integer"),
+		_ => 48,
+	};
+	assert!(patch_size>0, "patch_size ({}) must be greater than 0.", patch_size);
+
+	let batch_size = match app_m.value_of("BATCH_SIZE") {
+		Some(string) => string.parse::<usize>().expect("Batch_size argument must be an integer"),
+		_ => 4,
+	};
+	assert!(batch_size>0, "batch_size ({}) must be greater than 0.", batch_size);
+
 	let quantize = app_m.is_present("QUANTISE");
 
 	let recurse = app_m.is_present("RECURSE_SUBFOLDERS");
@@ -440,14 +464,14 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 	}
 
 	let factor = factor_option.unwrap_or(3);
-
+	assert!(factor>0, "factor ({}) must be greater than 0.", factor);
 	let log_depth = log_depth_option.unwrap_or(4);
+	
 
 	let graph = training_sr_net(factor, log_depth, 1e-6, power, scale, srgb_downscale)?;
 	
-	let batch_size = 4;
 	let mut training_stream = ImageFolder::new(training_folder, recurse)
-		.crop(0, &[48*factor, 48*factor, 3], Cropping::Random)
+		.crop(0, &[patch_size*factor, patch_size*factor, 3], Cropping::Random)
 		.shuffle_random()
 		.batch(batch_size)
 		.buffered(16);
