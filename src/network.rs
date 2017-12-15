@@ -52,7 +52,7 @@ pub fn training_sr_net(factor: usize, log_depth: u32, regularisation: f32, loss_
 		LinearToSrgb::new(&input_pool, &input).add_to(&mut g, tag![])?;
 	}
 
-	Robust::new(&output, &training_input, loss_scale, loss_power).multiplier(loss_scale*loss_power).mean_axes(&[1, 2, 3]).add_to(&mut g, tag![])?;
+	Robust::new(&output, &training_input, loss_scale, loss_power).multiplier(100.0*loss_scale*loss_power).mean_axes(&[0, 1, 2, 3]).add_to(&mut g, tag![])?;
 
 	ShapeConstraint::new(&training_input, &output).single(1, |d| d).single(2, |d| d).add_to(&mut g, tag![])?;
 

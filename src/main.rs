@@ -477,7 +477,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		.buffered(16);
 
 	let mut solver = Adam::new(&graph)?
-		.rate(lr / batch_size as f32)
+		.rate(lr)
 		.beta1(0.9)
 		.beta2(0.99)
 		.bias_correct(false);
@@ -493,7 +493,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 			let bytes = save_network(NetworkDescription{factor: factor, log_depth: log_depth, parameters: data.params.to_vec()}, quantize);
 			parameter_file.write_all(&bytes).expect("Could not save to parameter file");
 		}
-		println!("step {}\terr:{}\tchange:{}", step_count, data.err/batch_size as f32, data.change_norm);
+		println!("step {}\terr:{}\tchange:{}", step_count, data.err, data.change_norm);
 		step_count += 1;
 		CallbackSignal::Continue
 	});
