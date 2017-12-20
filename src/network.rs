@@ -11,7 +11,8 @@ use alumina::ops::shape::shape_constraint::ShapeConstraint;
 use alumina::ops::regularisation::l2::L2;
 use alumina::ops::loss::robust::Robust;
 
-use alumina::graph::{GraphDef, NodeTag, Result};
+use alumina::graph::{GraphDef, Result};
+use alumina::id::NodeTag;
 
 
 const CHANNELS: usize = 3;
@@ -20,7 +21,7 @@ const CHANNELS: usize = 3;
 pub fn inference_sr_net(factor: usize, log_depth: u32) -> Result<GraphDef> {
 	let mut g = sr_net_base(factor, log_depth)?;
 
-	ShapeConstraint::new(&g.node_id("input")?, &g.node_id("output")?)
+	ShapeConstraint::new(&g.node_id("input"), &g.node_id("output"))
 		.single(1, move |d| d*factor)
 		.single(2, move |d| d*factor)
 		.add_to(&mut g, tag![])?;	
@@ -32,13 +33,13 @@ pub fn training_sr_net(factor: usize, log_depth: u32, regularisation: f32, loss_
 	let mut g = sr_net_base(factor, log_depth)?;
 
 	if regularisation != 0.0 {
-		for node_id in g.node_ids(NodeTag::Parameter).keys() {
-			L2::new(node_id).multiplier(regularisation).add_to(&mut g, tag![])?;
+		for node_id in g.node_ids(NodeTag::Parameter) {
+			L2::new(&node_id).multiplier(regularisation).add_to(&mut g, tag![])?;
 		}
 	}	
 
-	let input = g.node_id("input")?;
-	let output = g.node_id("output")?;
+	let input = g.node_id("input");
+	let output = g.node_id("output");
 
 	let training_input = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "training_input", tag![])?;
 

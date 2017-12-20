@@ -311,8 +311,8 @@ fn downsample(app_m: &ArgMatches) -> Result<()>{
 	let input = image_to_data(&input_image);
 	let shape = input.shape().to_vec();
 	let input = input.into_shape(IxDyn(&[1, shape[0], shape[1], shape[2]])).unwrap();
-	let input_id = graph.node_id("input")?.value_id();
-	let output_id = graph.node_id("output")?.value_id();
+	let input_id = graph.node_id("input").value_id();
+	let output_id = graph.node_id("output").value_id();
 	let mut subgraph = graph.subgraph(&[input_id.clone()], &[output_id.clone()])?;
 	let result = subgraph.execute(vec![input]).expect("Could not execute downsampling graph");
 
@@ -372,11 +372,11 @@ fn upscale(app_m: &ArgMatches) -> Result<()>{
 
 	let mut input_vec = vec![input];
 	input_vec.extend(params);
-	let input_id = graph.node_id("input")?.value_id();
-	let param_ids: Vec<_> = graph.parameter_ids().keys().map(|node_id| node_id.value_id()).collect();
+	let input_id = graph.node_id("input").value_id();
+	let param_ids: Vec<_> = graph.parameter_ids().iter().map(|node_id| node_id.value_id()).collect();
 	let mut subgraph_inputs = vec![input_id];
-	subgraph_inputs.extend( param_ids);
-	let output_id = graph.node_id("output")?.value_id();
+	subgraph_inputs.extend(param_ids);
+	let output_id = graph.node_id("output").value_id();
 	let mut subgraph = graph.subgraph(&subgraph_inputs, &[output_id.clone()])?;
 	let result = subgraph.execute(input_vec).expect("Could not execute upsampling graph");
 
@@ -513,11 +513,12 @@ fn add_validation(app_m: &ArgMatches, solver: &mut Opt,  recurse: bool, factor: 
 	if let Some(val_folder) = app_m.value_of("VALIDATION_FOLDER"){ 
 		let power = 2.0;
 		let scale = 1.0;
-		let mut validation_graph = training_sr_net(factor, log_depth, 0.0, power, scale, srgb_downscale)?;
+		let mut val_graph = training_sr_net(factor, log_depth, 0.0, power, scale, srgb_downscale)?;
 
-		let input_ids: Vec<_> = iter::once(&validation_graph.node_id("training_input")?).chain(solver.parameters()).map(|node_id| node_id.value_id()).collect();
-		let output_id = validation_graph.node_id("output")?.value_id();
-		let mut validation_subgraph = validation_graph.subgraph(&input_ids, &[output_id.clone()])?;
+		let input_ids: Vec<_> = iter::once(val_graph.node_id("training_input").value_id())
+			.chain(solver.parameters().iter().map(|id| val_graph.node_id(id.name()).value_id())).collect();
+		let output_id = val_graph.node_id("output").value_id();
+		let mut validation_subgraph = val_graph.subgraph(&input_ids, &[output_id.clone()])?;
 
 		let validation_set =ImageFolder::new(val_folder, recurse);
 		let epoch_size = validation_set.length();
