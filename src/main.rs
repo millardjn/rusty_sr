@@ -36,10 +36,8 @@ use alumina::data::{DataSet, DataStream, Cropping};
 use alumina::graph::Result;
 use alumina::opt::{Opt, UnboxedCallbacks, CallbackSignal, max_steps};
 
-const L1NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L1SplineNatural.rsr");
-const L1ANIME_PARAMS: &'static [u8] = include_bytes!("res/L1SplineAnime.rsr");
-const L1FACES_PARAMS: &'static [u8] = include_bytes!("res/L1SplineFaces.rsr");
-
+const L1NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L1_3_sRGB_imagenet.rsr");
+const L2NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L2_3_sRGB_imagenet.rsr");
 
 fn main() {
 	let app_m = App::new("Rusty SR")
@@ -348,11 +346,11 @@ fn upscale(app_m: &ArgMatches) -> Result<()>{
 				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
 			Some("anime")=> {
 				print!("Upsampling using anime neural net parameters...");
-				let network_desc = load_network(L1ANIME_PARAMS);
+				let network_desc = load_network(L2NATURAL_PARAMS);
 				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
 			Some("faces")=> {
 				print!("Upsampling using faces neural net parameters...");
-				let network_desc = load_network(L1FACES_PARAMS);
+				let network_desc = load_network(L2NATURAL_PARAMS);
 				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
 			Some("bilinear") => {
 				print!("Upsampling using bilinear interpolation...");
