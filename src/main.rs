@@ -406,24 +406,21 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		_ => unreachable!(),
 	};
 
-	let lr = match app_m.value_of("LEARNING_RATE") {
-		None => 3e-3,
-		Some(string) => string.parse::<f32>().expect("Learning rate argument must be a numeric value"),
-	};
+	let lr = app_m.value_of("LEARNING_RATE")
+		.map(|string|string.parse::<f32>().expect("Learning rate argument must be a numeric value"))
+		.unwrap_or(3e-3);
 	if lr <= 0.0 {
 		eprintln!("Learning_rate ({}) probably should be greater than 0.", lr);
 	}
 
-	let patch_size = match app_m.value_of("PATCH_SIZE") {
-		Some(string) => string.parse::<usize>().expect("Patch_size argument must be an integer"),
-		_ => 48,
-	};
+	let patch_size = app_m.value_of("PATCH_SIZE")
+		.map(|string| string.parse::<usize>().expect("Patch_size argument must be an integer"))
+		.unwrap_or(48);
 	assert!(patch_size > 0, "Patch_size ({}) must be greater than 0.", patch_size);
 
-	let batch_size = match app_m.value_of("BATCH_SIZE") {
-		Some(string) => string.parse::<usize>().expect("Batch_size argument must be an integer"),
-		_ => 4,
-	};
+	let batch_size = app_m.value_of("BATCH_SIZE")
+		.map(|string| string.parse::<usize>().expect("Batch_size argument must be an integer"))
+		.unwrap_or(4);
 	assert!(batch_size > 0, "Batch_size ({}) must be greater than 0.", batch_size);
 
 	let quantise = app_m.is_present("QUANTISE");
