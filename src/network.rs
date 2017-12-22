@@ -17,56 +17,13 @@ use alumina::id::NodeTag;
 
 const CHANNELS: usize = 3;
 
-/// Just the base net plus the constraint that the output is exactly factor larger than the input
-pub fn inference_sr_net(factor: usize, log_depth: u32) -> Result<GraphDef> {
-	let mut g = sr_net_base(factor, log_depth)?;
-
-	ShapeConstraint::new(&g.node_id("input"), &g.node_id("output"))
-		.single(1, move |d| d*factor)
-		.single(2, move |d| d*factor)
-		.add_to(&mut g, tag![])?;	
-
-	Ok(g)
-}
-
-pub fn training_sr_net(factor: usize, log_depth: u32, regularisation: f32, loss_power: f32, loss_scale: f32, srgb_downsample: bool) -> Result<GraphDef> {
-	let mut g = sr_net_base(factor, log_depth)?;
-
-	if regularisation != 0.0 {
-		for node_id in g.node_ids(NodeTag::Parameter) {
-			L2::new(&node_id).multiplier(regularisation).add_to(&mut g, tag![])?;
-		}
-	}	
-
-	let input = g.node_id("input");
-	let output = g.node_id("output");
-
-	let training_input = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "training_input", tag![])?;
-
-	if srgb_downsample {
-		AvgPool::new(&training_input, &input, &[1, factor, factor, 1]).add_to(&mut g, tag![])?;
-	} else {
-		let training_input_lin = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "training_input_lin", tag![])?;
-		let input_pool = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "input_pool", tag![])?;
-		SrgbToLinear::new(&training_input, &training_input_lin).add_to(&mut g, tag![])?;
-		AvgPool::new(&training_input_lin, &input_pool, &[1, factor, factor, 1]).add_to(&mut g, tag![])?;
-		LinearToSrgb::new(&input_pool, &input).add_to(&mut g, tag![])?;
-	}
-
-	Robust::new(&output, &training_input, loss_scale, loss_power).multiplier(100.0*loss_scale*loss_power).mean_axes(&[0, 1, 2, 3]).add_to(&mut g, tag![])?;
-
-	ShapeConstraint::new(&training_input, &output).single(1, |d| d).single(2, |d| d).add_to(&mut g, tag![])?;
-
-	Ok(g)
-}
-
 /// Creates the upscaling network used as a base for training and inference
 ///
 /// The connection map in this network is similar to fractal-net, and ensures the following:
 ///  * The compute required increases linearly (amortised) with depth.
-///  * The inference time peak memory increases logarithmically (amortised) with depth.
+///  * The inference time peak memory increases O(log n)^2 (amortised) with depth.
 ///  * The training time memory increases linearly (amortised) with depth.
-///  * The effective backprop depth (maximum jumps for gradient to get to any particular node) increases logarithmically ///  * The training time memory increases linearly (amortised) with depth. with depth.
+///  * The effective backprop depth (maximum jumps for gradient to get to any particular node) increases logarithmically with depth
 pub fn sr_net_base(factor: usize, log_depth: u32) -> Result<GraphDef> {
 	
 	let hidden_layers = 2usize.pow(log_depth) - 1;// 2^x-1 if the prediction layer should connect directly to the input
@@ -109,6 +66,49 @@ pub fn sr_net_base(factor: usize, log_depth: u32) -> Result<GraphDef> {
 	let output = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "output", tag![])?;
 	Expand::new(&conv_nodes[conv_nodes.len()- 1], &output, &[1, factor, factor]).add_to(&mut g, tag![])?;
 	Linterp::new(input, &output, &[1, factor, factor, 1]).add_to(&mut g, tag![])?;
+
+	Ok(g)
+}
+
+/// Just the base net plus the constraint that the output is exactly factor larger than the input
+pub fn inference_sr_net(factor: usize, log_depth: u32) -> Result<GraphDef> {
+	let mut g = sr_net_base(factor, log_depth)?;
+
+	ShapeConstraint::new(&g.node_id("input"), &g.node_id("output"))
+		.single(1, move |d| d*factor)
+		.single(2, move |d| d*factor)
+		.add_to(&mut g, tag![])?;	
+
+	Ok(g)
+}
+
+pub fn training_sr_net(factor: usize, log_depth: u32, regularisation: f32, loss_power: f32, loss_scale: f32, srgb_downsample: bool) -> Result<GraphDef> {
+	let mut g = sr_net_base(factor, log_depth)?;
+
+	if regularisation != 0.0 {
+		for node_id in g.node_ids(NodeTag::Parameter) {
+			L2::new(&node_id).multiplier(regularisation).add_to(&mut g, tag![])?;
+		}
+	}	
+
+	let input = g.node_id("input");
+	let output = g.node_id("output");
+
+	let training_input = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "training_input", tag![])?;
+
+	if srgb_downsample {
+		AvgPool::new(&training_input, &input, &[1, factor, factor, 1]).add_to(&mut g, tag![])?;
+	} else {
+		let training_input_lin = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "training_input_lin", tag![])?;
+		let input_pool = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "input_pool", tag![])?;
+		SrgbToLinear::new(&training_input, &training_input_lin).add_to(&mut g, tag![])?;
+		AvgPool::new(&training_input_lin, &input_pool, &[1, factor, factor, 1]).add_to(&mut g, tag![])?;
+		LinearToSrgb::new(&input_pool, &input).add_to(&mut g, tag![])?;
+	}
+
+	Robust::new(&output, &training_input, loss_scale, loss_power).multiplier(100.0*loss_scale*loss_power).mean_axes(&[0, 1, 2, 3]).add_to(&mut g, tag![])?;
+
+	ShapeConstraint::new(&training_input, &output).single(1, |d| d).single(2, |d| d).add_to(&mut g, tag![])?;
 
 	Ok(g)
 }

@@ -13,6 +13,7 @@ extern crate byteorder;
 
 
 mod network;
+mod psnr;
 
 use std::fs::*;
 use std::path::Path;
@@ -26,15 +27,15 @@ use clap::{Arg, App, SubCommand, AppSettings, ArgMatches};
 
 use network::*;
 
-use ndarray::{ArrayD, Zip, IxDyn, Si, Axis};
-use byteorder::{LittleEndian, ByteOrder};
+use ndarray::{ArrayD, IxDyn, Axis};
+use byteorder::{BigEndian, ByteOrder};
 use xz2::read::{XzEncoder, XzDecoder};
 
 use alumina::opt::adam::Adam;
 use alumina::data::image_folder::{ImageFolder, image_to_data, data_to_image};
 use alumina::data::{DataSet, DataStream, Cropping};
-use alumina::graph::Result;
-use alumina::opt::{Opt, UnboxedCallbacks, CallbackSignal, max_steps};
+use alumina::graph::{Result, GraphDef};
+use alumina::opt::{Opt, UnboxedCallbacks, CallbackSignal};
 
 const L1NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L1_3_sRGB_imagenet.rsr");
 const L2NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L2_3_sRGB_imagenet.rsr");
@@ -92,13 +93,13 @@ fn main() {
 		.arg(Arg::with_name("LEARNING_RATE")
 			.short("R")
 			.long("rate")
-			.help("The learning rate used by the Adam optimiser. Default: 1e-2")
+			.help("The learning rate used by the Adam optimiser. Default: 3e-3")
 			.empty_values(false)
 		)
 		.arg(Arg::with_name("QUANTISE")
 			.short("q")
 			.long("quantise")
-			.help("Quantise the weights by zeroing the lowest 2 bytes of each. Reduces parameter file size")
+			.help("Quantise the weights by zeroing the smallest 12 bits of each f32. Reduces parameter file size")
 			.takes_value(false)
 		)
 		.arg(Arg::with_name("TRAINING_LOSS")
@@ -214,7 +215,7 @@ fn main() {
 	} if let Some(sub_m) = app_m.subcommand_matches("downsample") {
 		downsample(sub_m).unwrap();
 	} if let Some(sub_m) = app_m.subcommand_matches("psnr") {
-		psnr(sub_m);
+		psnr::psnr(sub_m);
 	} else {
 		upscale(&app_m).unwrap();
 	}
@@ -237,26 +238,39 @@ fn load_network(data: &[u8]) -> NetworkDescription {
 	deserialized
 }
 
-fn save_network(mut desc: NetworkDescription, quantize: bool) -> Vec<u8> {
+fn save_network(mut desc: NetworkDescription, quantise: bool) -> Vec<u8> {
 	for arr in &mut desc.parameters {
 		for e in arr.iter_mut() {
 			if let FpCategory::Subnormal = e.classify(){
 				*e = 0.0;
 			}
-			if quantize {
+			if quantise {
 				let mut bytes = [0; 4];
-				LittleEndian::write_f32(&mut bytes, *e);
-				bytes[0] = 0;
-				bytes[1] = 0;
-				*e = LittleEndian::read_f32(&bytes);
+				BigEndian::write_f32(&mut bytes, *e);
+				bytes[2] &= 0xF0;
+				bytes[3] &= 0x00;
+				*e = BigEndian::read_f32(&bytes);
 			}
 		}
 	}
 	
 	let serialized: Vec<u8> = serialize(&desc, Infinite).expect("NetworkDescription encoding failed");
 	let shuffled = shuffle(&serialized, 4);
-	let compressed = XzEncoder::new(shuffled.as_slice(), 9).bytes().collect::<::std::result::Result<Vec<_>, _>>().unwrap();
+	let compressed = XzEncoder::new(shuffled.as_slice(), 7).bytes().collect::<::std::result::Result<Vec<_>, _>>().unwrap();
 	compressed
+}
+
+/// Shuffle f32 bytes so that all first bytes are contiguous etc
+/// Improves compression of floating point data
+fn shuffle(data: &[u8], stride: usize) -> Vec<u8> {
+	let mut vec = Vec::with_capacity(data.len());
+	for offset in 0..stride {
+		for i in 0..(data.len()-offset+stride-1)/stride {
+			vec.push(data[offset + i*stride])
+		}
+	}
+	debug_assert_eq!(vec.len(), data.len());
+	vec
 }
 
 fn unshuffle(data: &[u8], stride: usize) -> Vec<u8> {
@@ -269,17 +283,6 @@ fn unshuffle(data: &[u8], stride: usize) -> Vec<u8> {
 		}
 	}
 	debug_assert_eq!(inc, data.len());
-	vec
-}
-
-fn shuffle(data: &[u8], stride: usize) -> Vec<u8> {
-	let mut vec = Vec::with_capacity(data.len());
-	for offset in 0..stride {
-		for i in 0..(data.len()-offset+stride-1)/stride {
-			vec.push(data[offset + i*stride])
-		}
-	}
-	debug_assert_eq!(vec.len(), data.len());
 	vec
 }
 
@@ -404,23 +407,26 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 	};
 
 	let lr = match app_m.value_of("LEARNING_RATE") {
-		None => 1e-2,
+		None => 3e-3,
 		Some(string) => string.parse::<f32>().expect("Learning rate argument must be a numeric value"),
 	};
+	if lr <= 0.0 {
+		eprintln!("Learning_rate ({}) probably should be greater than 0.", lr);
+	}
 
 	let patch_size = match app_m.value_of("PATCH_SIZE") {
 		Some(string) => string.parse::<usize>().expect("Patch_size argument must be an integer"),
 		_ => 48,
 	};
-	assert!(patch_size>0, "patch_size ({}) must be greater than 0.", patch_size);
+	assert!(patch_size > 0, "Patch_size ({}) must be greater than 0.", patch_size);
 
 	let batch_size = match app_m.value_of("BATCH_SIZE") {
 		Some(string) => string.parse::<usize>().expect("Batch_size argument must be an integer"),
 		_ => 4,
 	};
-	assert!(batch_size>0, "batch_size ({}) must be greater than 0.", batch_size);
+	assert!(batch_size > 0, "Batch_size ({}) must be greater than 0.", batch_size);
 
-	let quantize = app_m.is_present("QUANTISE");
+	let quantise = app_m.is_present("QUANTISE");
 
 	let recurse = app_m.is_present("RECURSE_SUBFOLDERS");
 
@@ -462,9 +468,8 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 	}
 
 	let factor = factor_option.unwrap_or(3);
-	assert!(factor>0, "factor ({}) must be greater than 0.", factor);
+	assert!(factor > 0, "factor ({}) must be greater than 0.", factor);
 	let log_depth = log_depth_option.unwrap_or(4);
-	
 
 	let graph = training_sr_net(factor, log_depth, 1e-6, power, scale, srgb_downscale)?;
 	
@@ -480,15 +485,11 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		.beta2(0.99)
 		.bias_correct(false);
 
-	let params = params_option.unwrap_or_else(||{
-		graph.initialise_nodes(solver.parameters()).expect("Could not initialise parameters")
-	});
-
 	let mut step_count = 0;
 	solver.add_callback(move |data|{
 		if step_count % 100 == 0 {
 			let mut parameter_file = File::create(&param_file_path).expect("Could not make parameter file");
-			let bytes = save_network(NetworkDescription{factor: factor, log_depth: log_depth, parameters: data.params.to_vec()}, quantize);
+			let bytes = save_network(NetworkDescription{factor: factor, log_depth: log_depth, parameters: data.params.to_vec()}, quantise);
 			parameter_file.write_all(&bytes).expect("Could not save to parameter file");
 		}
 		println!("step {}\terr:{}\tchange:{}", step_count, data.err, data.change_norm);
@@ -496,27 +497,23 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		CallbackSignal::Continue
 	});
 
-	add_validation(app_m, &mut solver, recurse, factor, log_depth, srgb_downscale)?;
+	add_validation(app_m,  recurse, &mut solver, &graph)?;
 
-	solver.add_boxed_callback(max_steps(10_000_000));
-
+	let params = params_option.unwrap_or_else(||graph.initialise_nodes(solver.parameters()).expect("Could not initialise parameters"));
 	println!("Beginning Training");
 	solver.optimise_from(&mut training_stream, params)?;	
 	println!("Done");
 	Ok(())
 }
 
-/// Add occasional test set evaluation as solver callback
-fn add_validation(app_m: &ArgMatches, solver: &mut Opt,  recurse: bool, factor: usize, log_depth: u32, srgb_downscale: bool) -> Result<()>{
-	if let Some(val_folder) = app_m.value_of("VALIDATION_FOLDER"){ 
-		let power = 2.0;
-		let scale = 1.0;
-		let mut val_graph = training_sr_net(factor, log_depth, 0.0, power, scale, srgb_downscale)?;
+/// Add occasional validation set evaluation as solver callback
+fn add_validation(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &GraphDef) -> Result<()>{
+	if let Some(val_folder) = app_m.value_of("VALIDATION_FOLDER"){
 
-		let input_ids: Vec<_> = iter::once(val_graph.node_id("training_input").value_id())
-			.chain(solver.parameters().iter().map(|id| val_graph.node_id(id.name()).value_id())).collect();
-		let output_id = val_graph.node_id("output").value_id();
-		let mut validation_subgraph = val_graph.subgraph(&input_ids, &[output_id.clone()])?;
+		let training_input_id = graph.node_id("training_input").value_id();
+		let input_ids: Vec<_> = iter::once(training_input_id.clone()).chain(solver.parameters().iter().map(|node_id| node_id.value_id())).collect();
+		let output_id = graph.node_id("output").value_id();
+		let mut validation_subgraph = graph.subgraph(&input_ids, &[output_id.clone(), training_input_id.clone()])?;
 
 		let validation_set =ImageFolder::new(val_folder, recurse);
 		let epoch_size = validation_set.length();
@@ -543,35 +540,13 @@ fn add_validation(app_m: &ArgMatches, solver: &mut Opt,  recurse: bool, factor: 
 
 				for _ in 0..n {
 					let mut training_input = validation_stream.next();
-					let training_input_copy = training_input[0].clone();
 					training_input.extend(data.params.to_vec());
 
 					let result = validation_subgraph.execute(training_input).expect("Could not execute upsampling graph");
 					let output = result.get(&output_id).unwrap();
+					let training_input = result.get(&training_input_id).unwrap();
 
-					let mut err = 0.0;
-					let mut y_err = 0.0;
-					let mut pix = 0.0f32;
-
-					Zip::from(output.genrows())
-						.and(training_input_copy.genrows())
-						.apply(|o, i| {
-							// let dr = (o[0].max(0.0).min(1.0)*255.0).round()/255.0 - i[0].max(0.0).min(1.0);
-							// let dg = (o[1].max(0.0).min(1.0)*255.0).round()/255.0 - i[1].max(0.0).min(1.0);
-							// let db = (o[2].max(0.0).min(1.0)*255.0).round()/255.0 - i[2].max(0.0).min(1.0);
-							let dr = o[0].max(0.0).min(1.0) - i[0].max(0.0).min(1.0);
-							let dg = o[1].max(0.0).min(1.0) - i[1].max(0.0).min(1.0);
-							let db = o[2].max(0.0).min(1.0) - i[2].max(0.0).min(1.0);
-							let y_diff = dr*0.299 + dg*0.587 + db*0.114; // 601
-							//let y_diff = dr*0.2126 + dg*0.7152 + db*0.0722; // BT.709
-
-							y_err += y_diff*y_diff;//(yo - yi)*(yo - yi);
-							err += (dr*dr + dg*dg + db*db)/3.0; // R G B
-							pix += 1.0;
-						});
-
-					psnr_sum += -10.0*(err/pix).log10();
-					y_psnr_sum += -10.0*(y_err/pix).log10();
+					let (err, y_err, pix) = psnr::psnr_calculation(output, training_input);
 
 					pix_sum += pix;
 					err_sum += err;
@@ -591,44 +566,4 @@ fn add_validation(app_m: &ArgMatches, solver: &mut Opt,  recurse: bool, factor: 
 	Ok(())
 }
 
-fn psnr(app_m: &ArgMatches){
-	let image1 = image::open(Path::new(app_m.value_of("IMAGE1").expect("No input file given?"))).expect("Error opening image1 file.");
-	let image2 = image::open(Path::new(app_m.value_of("IMAGE2").expect("No input file given?"))).expect("Error opening image2 file.");
 
-	let image1 = image_to_data(&image1);
-	let image2 = image_to_data(&image2);
-
-	if image1.shape() != image2.shape() {
-		println!("Image shapes will be cropped to the areas which overlap");
-	}
-
-	let min_height = cmp::min(image1.shape()[0], image2.shape()[0]);
-	let min_width = cmp::min(image1.shape()[1], image2.shape()[2]);
-
-	let slice_arg: [Si; 3] = [Si(0, Some(min_height as isize), 1), Si(0, Some(min_width as isize), 1), Si(0, Some(3), 1)];
-	let image1 = image1.slice(&slice_arg);
-	let image2 = image2.slice(&slice_arg);
-
-	let mut err = 0.0;
-	let mut y_err = 0.0;
-	let mut pix = 0.0f32;
-
-	Zip::from(image1.genrows())
-		.and(image2.genrows())
-		.apply(|o, i| {
-			let dr = o[0].max(0.0).min(1.0)-i[0].max(0.0).min(1.0);
-			let dg = o[1].max(0.0).min(1.0)-i[1].max(0.0).min(1.0);
-			let db = o[2].max(0.0).min(1.0)-i[2].max(0.0).min(1.0);
-			let y_diff = dr*0.299 + dg*0.587 + db*0.114; // 601
-			//let y_diff = dr*0.2126 + dg*0.7152 + db*0.0722; // BT.709
-
-			y_err += y_diff*y_diff;//(yo - yi)*(yo - yi);
-			err += (dr*dr + dg*dg + db*db)/3.0; // R G B
-			pix += 1.0;
-		});
-
-	let psnr = -10.0*(err/pix).log10();
-	let y_psnr = -10.0*(y_err/pix).log10();
-
-	println!("sRGB PSNR: {}\tLuma PSNR:{}", psnr, y_psnr);
-}
