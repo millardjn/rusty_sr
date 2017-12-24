@@ -554,6 +554,9 @@ fn add_validation(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &G
 					pix_sum += pix;
 					err_sum += err;
 					y_err_sum += y_err;
+
+					psnr_sum += -10.0*(err/pix).log10();
+					y_psnr_sum += -10.0*(y_err/pix).log10();
 				}
 
 				psnr_sum /= n as f32;
