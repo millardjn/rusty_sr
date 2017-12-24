@@ -37,8 +37,10 @@ use alumina::data::{DataSet, DataStream, Cropping};
 use alumina::graph::{Result, GraphDef};
 use alumina::opt::{Opt, UnboxedCallbacks, CallbackSignal};
 
-const L1NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L1_3_sRGB_imagenet.rsr");
-const L2NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L2_3_sRGB_imagenet.rsr");
+const L1_SRGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L1_3_sRGB_imagenet.rsr");
+const L2_SRGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L2_3_sRGB_imagenet.rsr");
+const L2_RGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L2_3_RGB_imagenet.rsr");
+const L2_SRGB_ANIME_PARAMS: &'static [u8] = include_bytes!("res/L2_3_sRGB_anime.rsr");
 
 fn main() {
 	let app_m = App::new("Rusty SR")
@@ -61,7 +63,7 @@ fn main() {
 		.short("p")
 		.long("parameters")
 		.value_name("PARAMETERS")
-		.possible_values(&["natural", "anime", "faces", "bilinear"])
+		.possible_values(&["natural", "natural_l1", "natural_rgb", "anime", "bilinear"])
 		.empty_values(false)
 	)
 	.arg(Arg::with_name("CUSTOM")
@@ -212,9 +214,9 @@ fn main() {
 	
 	if let Some(sub_m) = app_m.subcommand_matches("train") {
 		train(sub_m).unwrap();
-	} if let Some(sub_m) = app_m.subcommand_matches("downsample") {
+	} else if let Some(sub_m) = app_m.subcommand_matches("downsample") {
 		downsample(sub_m).unwrap();
-	} if let Some(sub_m) = app_m.subcommand_matches("psnr") {
+	} else if let Some(sub_m) = app_m.subcommand_matches("psnr") {
 		psnr::psnr(sub_m);
 	} else {
 		upscale(&app_m).unwrap();
@@ -344,16 +346,20 @@ fn upscale(app_m: &ArgMatches) -> Result<()>{
 	} else {
 		match app_m.value_of("PARAMETERS") {
 			Some("natural") | None => {
-				print!("Upsampling using natural neural net parameters...");
-				let network_desc = load_network(L1NATURAL_PARAMS);
+				print!("Upsampling using neural net trained on natural images...");
+				let network_desc = load_network(L2_SRGB_NATURAL_PARAMS);
+				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
+			Some("natural_l1")=> {
+				print!("Upsampling using neural net trained on natural images with an L1 loss...");
+				let network_desc = load_network(L1_SRGB_NATURAL_PARAMS);
+				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
+			Some("natural_rgb")=> {
+				print!("Upsampling using neural net trained on natural images with linear RGB downsampling...");
+				let network_desc = load_network(L2_RGB_NATURAL_PARAMS);
 				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
 			Some("anime")=> {
-				print!("Upsampling using anime neural net parameters...");
-				let network_desc = load_network(L2NATURAL_PARAMS);
-				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
-			Some("faces")=> {
-				print!("Upsampling using faces neural net parameters...");
-				let network_desc = load_network(L2NATURAL_PARAMS);
+				print!("Upsampling using neural net trained on animation images ...");
+				let network_desc = load_network(L2_SRGB_ANIME_PARAMS);
 				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
 			Some("bilinear") => {
 				print!("Upsampling using bilinear interpolation...");

@@ -138,7 +138,7 @@ pub fn downsample_lin_net(factor: usize) -> Result<GraphDef> {
 	let output = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "output", tag![])?;
 
 	SrgbToLinear::new(&input_hr, &input_hr_lin).add_to(&mut g, tag![])?;
-	AvgPool::new(&input_hr_lin, &input_pool, &[factor, factor]).add_to(&mut g, tag![])?;
+	AvgPool::new(&input_hr_lin, &input_pool, &[1, factor, factor, 1]).add_to(&mut g, tag![])?;
 	LinearToSrgb::new(&input_pool, &output).add_to(&mut g, tag![])?;
 
 	Ok(g)
