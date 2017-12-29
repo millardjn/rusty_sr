@@ -41,6 +41,7 @@ const L1_SRGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L1_3_sRGB_imag
 const L2_SRGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L2_3_sRGB_imagenet.rsr");
 const L2_RGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L2_3_RGB_imagenet.rsr");
 const L2_SRGB_ANIME_PARAMS: &'static [u8] = include_bytes!("res/L2_3_sRGB_anime.rsr");
+const L1_SRGB_ANIME_PARAMS: &'static [u8] = include_bytes!("res/L1_3_sRGB_anime.rsr");
 
 fn main() {
 	let app_m = App::new("Rusty SR")
@@ -63,7 +64,7 @@ fn main() {
 		.short("p")
 		.long("parameters")
 		.value_name("PARAMETERS")
-		.possible_values(&["natural", "natural_l1", "natural_rgb", "anime", "bilinear"])
+		.possible_values(&["natural", "natural_L1", "natural_rgb", "anime", "anime_L1", "bilinear"])
 		.empty_values(false)
 	)
 	.arg(Arg::with_name("CUSTOM")
@@ -349,7 +350,7 @@ fn upscale(app_m: &ArgMatches) -> Result<()>{
 				print!("Upsampling using neural net trained on natural images...");
 				let network_desc = load_network(L2_SRGB_NATURAL_PARAMS);
 				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
-			Some("natural_l1")=> {
+			Some("natural_L1")=> {
 				print!("Upsampling using neural net trained on natural images with an L1 loss...");
 				let network_desc = load_network(L1_SRGB_NATURAL_PARAMS);
 				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
@@ -358,8 +359,12 @@ fn upscale(app_m: &ArgMatches) -> Result<()>{
 				let network_desc = load_network(L2_RGB_NATURAL_PARAMS);
 				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
 			Some("anime")=> {
-				print!("Upsampling using neural net trained on animation images ...");
+				print!("Upsampling using neural net trained on animation images...");
 				let network_desc = load_network(L2_SRGB_ANIME_PARAMS);
+				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
+			Some("anime_L1")=> {
+				print!("Upsampling using neural net trained on animation images with an L1 loss...");
+				let network_desc = load_network(L1_SRGB_ANIME_PARAMS);
 				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
 			Some("bilinear") => {
 				print!("Upsampling using bilinear interpolation...");
