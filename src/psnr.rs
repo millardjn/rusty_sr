@@ -1,12 +1,25 @@
 
 use std::cmp;
 
-use ndarray::{ArrayViewD, Zip, Si};
+use ndarray::{ArrayViewD, Axis, Zip, Si};
 
-
-/// returns the err, y_err and pixel count of a pair of images
+/// Takes two tensors of shape [H, W, 3] and
+/// returns the err, y_err and pixel count of a pair of images.
+/// if a 4th dimension is present a subview at index 0 will be used.
 pub fn psnr_calculation(image1: ArrayViewD<f32>, image2: ArrayViewD<f32>) -> (f32, f32, f32) {
 	
+	let image1 = if image1.ndim() == 4 {
+		image1.subview(Axis(0), 0)
+	} else {
+		image1.view()
+	};
+
+	let image2 = if image2.ndim() == 4 {
+		image2.subview(Axis(0), 0)
+	} else {
+		image2.view()
+	};
+
 	let min_height = cmp::min(image1.shape()[0], image2.shape()[0]);
 	let min_width = cmp::min(image1.shape()[1], image2.shape()[2]);
 
