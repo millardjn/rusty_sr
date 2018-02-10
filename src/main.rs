@@ -320,15 +320,17 @@ fn upscale(app_m: &ArgMatches) -> ::std::result::Result<(), String>{
 
 fn train(app_m: &ArgMatches) -> Result<()> {
 
+	println!("Training with:");
+
 	let srgb_downscale = match app_m.value_of("DOWNSCALE_COLORSPACE") {
-		Some("sRGB") | None => true,
-		Some("RGB") => false,
+		Some("sRGB") | None => {println!(" sRGB downscaling"); true},
+		Some("RGB") => {println!(" RGB downscaling"); false},
 		_ => unreachable!(),
 	};
 	
 	let (power, scale) = match app_m.value_of("TRAINING_LOSS") {
-		Some("L1") | None => (1.0, 1.0/255.0), // L1, smoothed
-		Some("L2") => (2.0, 1.0/255.0), // L2
+		Some("L1") | None => {println!(" L1 loss"); (1.0, 1.0/255.0)},
+		Some("L2") => {println!(" L2 loss"); (2.0, 1.0/255.0)},
 		_ => unreachable!(),
 	};
 
@@ -338,16 +340,19 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 	if lr <= 0.0 {
 		eprintln!("Learning_rate ({}) probably should be greater than 0.", lr);
 	}
+	println!(" learning rate: {}", lr);
 
 	let patch_size = app_m.value_of("PATCH_SIZE")
 		.map(|string| string.parse::<usize>().expect("Patch_size argument must be an integer"))
 		.unwrap_or(48);
 	assert!(patch_size > 0, "Patch_size ({}) must be greater than 0.", patch_size);
+	println!(" patch_size: {}", patch_size);
 
 	let batch_size = app_m.value_of("BATCH_SIZE")
 		.map(|string| string.parse::<usize>().expect("Batch_size argument must be an integer"))
 		.unwrap_or(4);
 	assert!(batch_size > 0, "Batch_size ({}) must be greater than 0.", batch_size);
+	println!(" batch_size: {}", patch_size);
 
 	let quantise = app_m.is_present("QUANTISE");
 
@@ -371,18 +376,19 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 
 	let mut params_option = None;
 	if let Some(param_str) = app_m.value_of("START_PARAMETERS") {
+		println!(" initialising with parameters from: {}", param_file_path.to_string_lossy());
 		let mut param_file = File::open(Path::new(param_str)).expect("Error opening start parameter file");
 		let mut data = Vec::new();
 		param_file.read_to_end(&mut data).expect("Reading start parameter file failed");
 		let network_desc = rusty_sr::network_from_bytes(&data)?;
 		if let Some(factor) = factor_option {
 			if factor != network_desc.factor {
-				println!("Using factor from parameter file ({}) rather than factor from argument ({})", network_desc.factor, factor);
+				eprintln!("Using factor from parameter file ({}) rather than factor from argument ({})", network_desc.factor, factor);
 			}
 		}
 		if let Some(log_depth) = log_depth_option {
 			if log_depth != network_desc.log_depth {
-				println!("Using log_depth from parameter file ({}) rather than log_depth from argument ({})", network_desc.log_depth, log_depth);
+				eprintln!("Using log_depth from parameter file ({}) rather than log_depth from argument ({})", network_desc.log_depth, log_depth);
 			}
 		}
 		params_option = Some(network_desc.parameters);
@@ -392,7 +398,10 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 
 	let factor = factor_option.unwrap_or(3);
 	assert!(factor > 0, "factor ({}) must be greater than 0.", factor);
+	println!(" factor: {}", factor);
+
 	let log_depth = log_depth_option.unwrap_or(4);
+	println!(" log_depth: {}", log_depth);
 
 	let graph = training_sr_net(factor, log_depth, 1e-6, power, scale, srgb_downscale)?;
 	
