@@ -1,47 +1,33 @@
-#[macro_use]
 extern crate alumina;
 extern crate rand;
 extern crate clap;
 extern crate image;
 extern crate ndarray;
-#[macro_use]
-extern crate serde_derive;
 extern crate serde;
 extern crate bincode;
 extern crate xz2;
 extern crate byteorder;
 
+extern crate rusty_sr;
 
-mod network;
-mod psnr;
 
 use std::fs::*;
 use std::path::Path;
 use std::io::{stdout, Write, Read};
 use std::cmp;
 use std::iter;
-use std::num::FpCategory;
 
-use bincode::{serialize, deserialize, Infinite};
 use clap::{Arg, App, SubCommand, AppSettings, ArgMatches};
 
-use network::*;
-
-use ndarray::{ArrayD, IxDyn, Axis};
-use byteorder::{BigEndian, ByteOrder};
-use xz2::read::{XzEncoder, XzDecoder};
-
 use alumina::opt::adam::Adam;
-use alumina::data::image_folder::{ImageFolder, image_to_data, data_to_image};
+use alumina::data::image_folder::ImageFolder;
 use alumina::data::{DataSet, DataStream, Cropping};
 use alumina::graph::{Result, GraphDef};
 use alumina::opt::{Opt, UnboxedCallbacks, CallbackSignal};
 
-const L1_SRGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L1_3_sRGB_imagenet.rsr");
-const L2_SRGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L2_3_sRGB_imagenet.rsr");
-const L2_RGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L2_3_RGB_imagenet.rsr");
-const L2_SRGB_ANIME_PARAMS: &'static [u8] = include_bytes!("res/L2_3_sRGB_anime.rsr");
-const L1_SRGB_ANIME_PARAMS: &'static [u8] = include_bytes!("res/L1_3_sRGB_anime.rsr");
+use rusty_sr::psnr;
+use rusty_sr::network::*;
+use rusty_sr::{UpscalingNetwork, NetworkDescription};
 
 fn main() {
 	let app_m = App::new("Rusty SR")
@@ -172,8 +158,8 @@ fn main() {
 			.empty_values(false)
 		)
 	)
-	.subcommand(SubCommand::with_name("downsample")
-	 	.about("Downsample images")
+	.subcommand(SubCommand::with_name("downscale")
+	 	.about("Downscale images")
 		.arg(Arg::with_name("FACTOR")
 			.help("The integer downscaling factor")
 			.required(true)
@@ -190,13 +176,26 @@ fn main() {
 			.index(3)
 		)
 	 	.arg(Arg::with_name("COLOURSPACE")
-	 		.help("colorspace in which to perform downsampling")
+	 		.help("colorspace in which to perform downsampling. Default: sRGB")
 	 		.short("c")
 	 		.long("colourspace")
 	 		.value_name("COLOURSPACE")
 	 		.possible_values(&["sRGB", "RGB"])
 	 		.empty_values(false)
 	 	)
+	)
+	.subcommand(SubCommand::with_name("quantise")
+	 	.about("Quantise the weights of a network, reducing file size")
+		.arg(Arg::with_name("INPUT_FILE")
+			.help("The input network to be quantised")
+			.required(true)
+			.index(1)
+		)
+		.arg(Arg::with_name("OUTPUT_FILE")
+			.help("The location at which the quantised network will be saved")
+			.required(true)
+			.index(2)
+		)
 	)
 	.subcommand(SubCommand::with_name("psnr")
 		.about("Print the PSNR value from the differences between the two images")
@@ -214,190 +213,83 @@ fn main() {
 	.get_matches();
 	
 	if let Some(sub_m) = app_m.subcommand_matches("train") {
-		train(sub_m).unwrap();
-	} else if let Some(sub_m) = app_m.subcommand_matches("downsample") {
-		downsample(sub_m).unwrap();
+		train(sub_m).unwrap_or_else(|err| println!("{}", err));
+	} else if let Some(sub_m) = app_m.subcommand_matches("downscale") {
+		downscale(sub_m).unwrap_or_else(|err| println!("{}", err));
 	} else if let Some(sub_m) = app_m.subcommand_matches("psnr") {
-		psnr::psnr(sub_m);
+		psnr::psnr(sub_m).unwrap_or_else(|err| println!("{}", err));
+	} else if let Some(sub_m) = app_m.subcommand_matches("quantise") {
+		quantise(sub_m).unwrap_or_else(|err| println!("{}", err));
 	} else {
-		upscale(&app_m).unwrap();
+		upscale(&app_m).unwrap_or_else(|err| println!("{}", err));
 	}
 	
 }
 
+fn quantise(app_m: &ArgMatches) -> ::std::result::Result<(), String>{
+	let mut input_file = File::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).map_err(|e| e.to_string())?;
+	let mut input_data = Vec::new();
+	input_file.read_to_end(&mut input_data).map_err(|e| e.to_string())?;
+	let input_network = rusty_sr::network_from_bytes(&input_data)?;
 
-#[derive(Debug, Serialize, Deserialize)]
-struct NetworkDescription {
-	factor: usize,
-	log_depth: u32,
-	parameters: Vec<ArrayD<f32>>,
+	let mut output_file = File::create(Path::new(app_m.value_of("OUTPUT_FILE").expect("No output file given?"))).map_err(|e| e.to_string())?;
+	let output_data = rusty_sr::network_to_bytes(input_network, true).map_err(|e| e.to_string())?;
+	output_file.write_all(&output_data).map_err(|e| e.to_string())?;
+
+	Ok(())
 }
 
-
-fn load_network(data: &[u8]) -> NetworkDescription {
-	let decompressed = XzDecoder::new(data).bytes().collect::<::std::result::Result<Vec<_>, _>>().unwrap();
-	let unshuffled = unshuffle(&decompressed, 4);
-	let deserialized: NetworkDescription = deserialize(&unshuffled).expect("NetworkDescription decoding failed");
-	deserialized
-}
-
-fn save_network(mut desc: NetworkDescription, quantise: bool) -> Vec<u8> {
-	for arr in &mut desc.parameters {
-		for e in arr.iter_mut() {
-			if let FpCategory::Subnormal = e.classify(){
-				*e = 0.0;
-			}
-			if quantise {
-				let mut bytes = [0; 4];
-				BigEndian::write_f32(&mut bytes, *e);
-				bytes[2] &= 0xF0;
-				bytes[3] &= 0x00;
-				*e = BigEndian::read_f32(&bytes);
-			}
-		}
-	}
-	
-	let serialized: Vec<u8> = serialize(&desc, Infinite).expect("NetworkDescription encoding failed");
-	let shuffled = shuffle(&serialized, 4);
-	let compressed = XzEncoder::new(shuffled.as_slice(), 7).bytes().collect::<::std::result::Result<Vec<_>, _>>().unwrap();
-	compressed
-}
-
-/// Shuffle f32 bytes so that all first bytes are contiguous etc
-/// Improves compression of floating point data
-fn shuffle(data: &[u8], stride: usize) -> Vec<u8> {
-	let mut vec = Vec::with_capacity(data.len());
-	for offset in 0..stride {
-		for i in 0..(data.len()-offset+stride-1)/stride {
-			vec.push(data[offset + i*stride])
-		}
-	}
-	debug_assert_eq!(vec.len(), data.len());
-	vec
-}
-
-fn unshuffle(data: &[u8], stride: usize) -> Vec<u8> {
-	let mut vec = vec![0; data.len()];
-	let mut inc = 0;
-	for offset in 0..stride {
-		for i in 0..(data.len()-offset+stride-1)/stride {
-			vec[offset + i*stride] = data[inc];
-			inc += 1;
-		}
-	}
-	debug_assert_eq!(inc, data.len());
-	vec
-}
-
-fn downsample(app_m: &ArgMatches) -> Result<()>{
+fn downscale(app_m: &ArgMatches) -> Result<()>{
 
 	let factor = match app_m.value_of("FACTOR") {
 		Some(string) => string.parse::<usize>().expect("Factor argument must be an integer"),
 		_ => unreachable!(),
 	};
 
-	let graph = match app_m.value_of("COLOURSPACE") {
-		Some("RGB") | None => {
-			print!("Downsampling using average pooling of linear RGB values...");
-			downsample_lin_net(factor)?},
-		Some("sRGB")=> {
-			print!("Downsampling using average pooling of sRGB values...");
-			downsample_srgb_net(factor)?},
+	let srgb = match app_m.value_of("COLOURSPACE") {
+		Some("sRGB") | None => true,
+		Some("RGB")=> false,
 		_ => unreachable!(),
 	};
 
-	stdout().flush().ok();
+	let input = rusty_sr::read(&mut File::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
 
-	let input_image = image::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).expect("Error opening input image file.");
-
-	let out_path = Path::new(app_m.value_of("OUTPUT_FILE").expect("No output file given?"));
-
-	let input = image_to_data(&input_image);
-	let shape = input.shape().to_vec();
-	let input = input.into_shape(IxDyn(&[1, shape[0], shape[1], shape[2]])).unwrap();
-	let input_id = graph.node_id("input").value_id();
-	let output_id = graph.node_id("output").value_id();
-	let mut subgraph = graph.subgraph(&[input_id.clone()], &[output_id.clone()])?;
-	let result = subgraph.execute(vec![input]).expect("Could not execute downsampling graph");
-
-	let output = result.get(&output_id).unwrap();
+	let output = rusty_sr::downscale(input, factor, srgb).map_err(|e| e.to_string())?;
 
 	print!(" Writing file...");
 	stdout().flush().ok();
-	data_to_image(output.subview(Axis(0), 0)).to_rgba().save(out_path).expect("Could not write output file");
-	
+	rusty_sr::save(output, &mut File::create(Path::new(app_m.value_of("OUTPUT_FILE").expect("No output file given?"))).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+
 	println!(" Done");
 	Ok(())
 }
 
-fn upscale(app_m: &ArgMatches) -> Result<()>{
+fn upscale(app_m: &ArgMatches) -> ::std::result::Result<(), String>{
 	let factor = match app_m.value_of("BILINEAR_FACTOR") {
 		Some(string) => string.parse::<usize>().expect("Factor argument must be an integer"),
 		_ => 3,
 	};
 
 	//-- Sort out parameters and graph
-	let (params, graph) = if let Some(file_str) = app_m.value_of("CUSTOM") {
+	let network: UpscalingNetwork = if let Some(file_str) = app_m.value_of("CUSTOM") {
 		let mut param_file = File::open(Path::new(file_str)).expect("Error opening parameter file");
 		let mut data = Vec::new();
 		param_file.read_to_end(&mut data).expect("Reading parameter file failed");
-		print!("Upsampling using custom neural net parameters...");
-		let network_desc = load_network(&data);
-		(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)
+		UpscalingNetwork::Custom(rusty_sr::network_from_bytes(&data)?)
 	} else {
-		match app_m.value_of("PARAMETERS") {
-			Some("natural") | None => {
-				print!("Upsampling using neural net trained on natural images...");
-				let network_desc = load_network(L2_SRGB_NATURAL_PARAMS);
-				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
-			Some("natural_L1")=> {
-				print!("Upsampling using neural net trained on natural images with an L1 loss...");
-				let network_desc = load_network(L1_SRGB_NATURAL_PARAMS);
-				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
-			Some("natural_rgb")=> {
-				print!("Upsampling using neural net trained on natural images with linear RGB downsampling...");
-				let network_desc = load_network(L2_RGB_NATURAL_PARAMS);
-				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
-			Some("anime")=> {
-				print!("Upsampling using neural net trained on animation images...");
-				let network_desc = load_network(L2_SRGB_ANIME_PARAMS);
-				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
-			Some("anime_L1")=> {
-				print!("Upsampling using neural net trained on animation images with an L1 loss...");
-				let network_desc = load_network(L1_SRGB_ANIME_PARAMS);
-				(network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth)?)},
-			Some("bilinear") => {
-				print!("Upsampling using bilinear interpolation...");
-				(Vec::new(), bilinear_net(factor)?)},
-			_ => unreachable!(),
-		}
+		app_m.value_of("PARAMETERS").unwrap_or("natural").parse::<UpscalingNetwork>().map_err(|e| e.to_string())?
 	};
-	stdout().flush().ok();
+	println!("Upsampling using {}...", network);
 
-	let input_image = image::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).expect("Error opening input image file.");
 
-	let out_path = Path::new(app_m.value_of("OUTPUT_FILE").expect("No output file given?"));
+	let input = rusty_sr::read(&mut File::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
 
-	let input = image_to_data(&input_image);
-	let shape = input.shape().to_vec();
-	let input = input.into_shape(IxDyn(&[1, shape[0], shape[1], shape[2]])).unwrap();
-
-	let mut input_vec = vec![input];
-	input_vec.extend(params);
-	let input_id = graph.node_id("input").value_id();
-	let param_ids: Vec<_> = graph.parameter_ids().iter().map(|node_id| node_id.value_id()).collect();
-	let mut subgraph_inputs = vec![input_id];
-	subgraph_inputs.extend(param_ids);
-	let output_id = graph.node_id("output").value_id();
-	let mut subgraph = graph.subgraph(&subgraph_inputs, &[output_id.clone()])?;
-	let result = subgraph.execute(input_vec).expect("Could not execute upsampling graph");
-
-	let output = result.get(&output_id).unwrap();
+	let output = rusty_sr::upscale(input, network, Some(factor)).map_err(|e| e.to_string())?;
 
 	print!(" Writing file...");
 	stdout().flush().ok();
-	data_to_image(output.subview(Axis(0), 0)).to_rgba().save(out_path).expect("Could not write output file");
-	
+	rusty_sr::save(output, &mut File::create(Path::new(app_m.value_of("OUTPUT_FILE").expect("No output file given?"))).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+
 	println!(" Done");
 	Ok(())
 }
@@ -459,7 +351,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		let mut param_file = File::open(Path::new(param_str)).expect("Error opening start parameter file");
 		let mut data = Vec::new();
 		param_file.read_to_end(&mut data).expect("Reading start parameter file failed");
-		let network_desc = load_network(&data);
+		let network_desc = rusty_sr::network_from_bytes(&data)?;
 		if let Some(factor) = factor_option {
 			if factor != network_desc.factor {
 				println!("Using factor from parameter file ({}) rather than factor from argument ({})", network_desc.factor, factor);
@@ -497,7 +389,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 	solver.add_callback(move |data|{
 		if step_count % 100 == 0 {
 			let mut parameter_file = File::create(&param_file_path).expect("Could not make parameter file");
-			let bytes = save_network(NetworkDescription{factor: factor, log_depth: log_depth, parameters: data.params.to_vec()}, quantise);
+			let bytes = rusty_sr::network_to_bytes(NetworkDescription{factor: factor, log_depth: log_depth, parameters: data.params.to_vec()}, quantise).unwrap();
 			parameter_file.write_all(&bytes).expect("Could not save to parameter file");
 		}
 		println!("step {}\terr:{}\tchange:{}", step_count, data.err, data.change_norm);

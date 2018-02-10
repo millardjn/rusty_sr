@@ -10,7 +10,7 @@ use alumina::data::image_folder::image_to_data;
 use image;
 
 
-pub fn psnr(app_m: &ArgMatches){
+pub fn psnr(app_m: &ArgMatches)-> Result<(), String>{
 	let image1 = image::open(Path::new(app_m.value_of("IMAGE1").expect("No input file given?"))).expect("Error opening image1 file.");
 	let image2 = image::open(Path::new(app_m.value_of("IMAGE2").expect("No input file given?"))).expect("Error opening image2 file.");
 
@@ -31,6 +31,7 @@ pub fn psnr(app_m: &ArgMatches){
 	let (err, y_err, pix) = psnr_calculation(image1, image2);
 
 	println!("sRGB PSNR: {}\tLuma PSNR:{}", -10.0*(err/pix).log10(), -10.0*(y_err/pix).log10());
+	Ok(())
 }
 
 /// returns the err, y_err and pixel count of a pair of images

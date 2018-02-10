@@ -129,7 +129,7 @@ pub fn bilinear_net(factor: usize) -> Result<GraphDef> {
 	Ok(g)
 }
 
-pub fn downsample_lin_net(factor: usize) -> Result<GraphDef> {
+pub fn downscale_lin_net(factor: usize) -> Result<GraphDef> {
 	let mut g = GraphDef::new();
 
 	let input_hr = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "input", tag![])?;
@@ -144,7 +144,7 @@ pub fn downsample_lin_net(factor: usize) -> Result<GraphDef> {
 	Ok(g)
 }
 
-pub fn downsample_srgb_net(factor: usize) -> Result<GraphDef> {
+pub fn downscale_srgb_net(factor: usize) -> Result<GraphDef> {
 	let mut g = GraphDef::new();
 
 	let input_hr = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "downsample_input", tag![])?;
