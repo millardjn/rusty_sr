@@ -447,7 +447,7 @@ fn add_validation(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &G
 		let output_id = graph.node_id("output").value_id();
 		let mut validation_subgraph = graph.subgraph(&input_ids, &[output_id.clone(), training_input_id.clone()])?;
 
-		let validation_set =ImageFolder::new(val_folder, recurse);
+		let validation_set = ImageFolder::new(val_folder, recurse);
 		let epoch_size = validation_set.length();
 		let mut validation_stream = validation_set
 			.shuffle_random()

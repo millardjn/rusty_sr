@@ -21,7 +21,7 @@ const CHANNELS: usize = 3;
 ///
 /// The connection map in this network is similar to fractal-net, and ensures the following:
 ///  * The compute required increases linearly (amortised) with depth.
-///  * The inference time peak memory increases O(log n)^2 (amortised) with depth.
+///  * The inference time peak memory increases O((log n)^2) (amortised) with depth.
 ///  * The training time memory increases linearly (amortised) with depth.
 ///  * The effective backprop depth (maximum jumps for gradient to get to any particular node) increases logarithmically with depth
 pub fn sr_net_base(factor: usize, log_depth: u32) -> Result<GraphDef> {
