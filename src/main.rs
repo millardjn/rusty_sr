@@ -100,7 +100,7 @@ fn main() {
 	 		.empty_values(false)
 	 	)
 		.arg(Arg::with_name("DOWNSCALE_COLOURSPACE")
-	 		.help("Colorspace in which to perform downsampling. Default: sRGB")
+	 		.help("Colourspace in which to perform downsampling. Default: sRGB")
 	 		.short("c")
 	 		.long("colourspace")
 	 		.value_name("COLOURSPACE")
@@ -176,7 +176,7 @@ fn main() {
 			.index(3)
 		)
 	 	.arg(Arg::with_name("COLOURSPACE")
-	 		.help("colorspace in which to perform downsampling. Default: sRGB")
+	 		.help("colourspace in which to perform downsampling. Default: sRGB")
 	 		.short("c")
 	 		.long("colourspace")
 	 		.value_name("COLOURSPACE")
@@ -322,7 +322,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 
 	println!("Training with:");
 
-	let srgb_downscale = match app_m.value_of("DOWNSCALE_COLORSPACE") {
+	let srgb_downscale = match app_m.value_of("DOWNSCALE_COLOURSPACE") {
 		Some("sRGB") | None => {println!(" sRGB downscaling"); true},
 		Some("RGB") => {println!(" RGB downscaling"); false},
 		_ => unreachable!(),
