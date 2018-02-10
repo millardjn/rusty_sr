@@ -1,26 +1,12 @@
-use std::path::Path;
-use std::cmp;
 
-use clap::ArgMatches;
+use std::cmp;
 
 use ndarray::{ArrayViewD, Zip, Si};
 
-use alumina::data::image_folder::image_to_data;
 
-use image;
-
-
-pub fn psnr(app_m: &ArgMatches)-> Result<(), String>{
-	let image1 = image::open(Path::new(app_m.value_of("IMAGE1").expect("No input file given?"))).expect("Error opening image1 file.");
-	let image2 = image::open(Path::new(app_m.value_of("IMAGE2").expect("No input file given?"))).expect("Error opening image2 file.");
-
-	let image1 = image_to_data(&image1);
-	let image2 = image_to_data(&image2);
-
-	if image1.shape() != image2.shape() {
-		println!("Image shapes will be cropped to the areas which overlap");
-	}
-
+/// returns the err, y_err and pixel count of a pair of images
+pub fn psnr_calculation(image1: ArrayViewD<f32>, image2: ArrayViewD<f32>) -> (f32, f32, f32) {
+	
 	let min_height = cmp::min(image1.shape()[0], image2.shape()[0]);
 	let min_width = cmp::min(image1.shape()[1], image2.shape()[2]);
 
@@ -28,14 +14,7 @@ pub fn psnr(app_m: &ArgMatches)-> Result<(), String>{
 	let image1 = image1.slice(&slice_arg);
 	let image2 = image2.slice(&slice_arg);
 
-	let (err, y_err, pix) = psnr_calculation(image1, image2);
-
-	println!("sRGB PSNR: {}\tLuma PSNR:{}", -10.0*(err/pix).log10(), -10.0*(y_err/pix).log10());
-	Ok(())
-}
-
-/// returns the err, y_err and pixel count of a pair of images
-pub fn psnr_calculation(image1: ArrayViewD<f32>, image2: ArrayViewD<f32>) -> (f32, f32, f32) {
+	
 	let mut err = 0.0;
 	let mut y_err = 0.0;
 	let mut pix = 0.0f32;

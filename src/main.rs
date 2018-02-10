@@ -20,7 +20,7 @@ use std::iter;
 use clap::{Arg, App, SubCommand, AppSettings, ArgMatches};
 
 use alumina::opt::adam::Adam;
-use alumina::data::image_folder::ImageFolder;
+use alumina::data::image_folder::{ImageFolder, image_to_data};
 use alumina::data::{DataSet, DataStream, Cropping};
 use alumina::graph::{Result, GraphDef};
 use alumina::opt::{Opt, UnboxedCallbacks, CallbackSignal};
@@ -217,7 +217,7 @@ fn main() {
 	} else if let Some(sub_m) = app_m.subcommand_matches("downscale") {
 		downscale(sub_m).unwrap_or_else(|err| println!("{}", err));
 	} else if let Some(sub_m) = app_m.subcommand_matches("psnr") {
-		psnr::psnr(sub_m).unwrap_or_else(|err| println!("{}", err));
+		psnr(sub_m).unwrap_or_else(|err| println!("{}", err));
 	} else if let Some(sub_m) = app_m.subcommand_matches("quantise") {
 		quantise(sub_m).unwrap_or_else(|err| println!("{}", err));
 	} else {
@@ -226,15 +226,34 @@ fn main() {
 	
 }
 
+pub fn psnr(app_m: &ArgMatches)-> ::std::result::Result<(), String>{
+	let image1 = image::open(Path::new(app_m.value_of("IMAGE1").expect("No input file given?"))).map_err(|e| format!("Error opening image1 file: {}", e))?;
+	let image2 = image::open(Path::new(app_m.value_of("IMAGE2").expect("No input file given?"))).map_err(|e| format!("Error opening image2 file: {}", e))?;
+
+	let image1 = image_to_data(&image1);
+	let image2 = image_to_data(&image2);
+
+	if image1.shape() != image2.shape() {
+		println!("Image shapes will be cropped to the top left areas which overlap");
+	}
+
+	let (err, y_err, pix) = psnr::psnr_calculation(image1.view(), image2.view());
+
+	println!("sRGB PSNR: {}\tLuma PSNR:{}", -10.0*(err/pix).log10(), -10.0*(y_err/pix).log10());
+	Ok(())
+}
+
 fn quantise(app_m: &ArgMatches) -> ::std::result::Result<(), String>{
-	let mut input_file = File::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).map_err(|e| e.to_string())?;
+	let mut input_file = File::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?")))
+		.map_err(|e| format!("Error opening input file: {}", e))?;
 	let mut input_data = Vec::new();
-	input_file.read_to_end(&mut input_data).map_err(|e| e.to_string())?;
+	input_file.read_to_end(&mut input_data).map_err(|e| format!("Error reading input file: {}", e))?;
 	let input_network = rusty_sr::network_from_bytes(&input_data)?;
 
-	let mut output_file = File::create(Path::new(app_m.value_of("OUTPUT_FILE").expect("No output file given?"))).map_err(|e| e.to_string())?;
+	let mut output_file = File::create(Path::new(app_m.value_of("OUTPUT_FILE").expect("No output file given?")))
+		.map_err(|e| format!("Error creating output file: {}", e))?;
 	let output_data = rusty_sr::network_to_bytes(input_network, true).map_err(|e| e.to_string())?;
-	output_file.write_all(&output_data).map_err(|e| e.to_string())?;
+	output_file.write_all(&output_data).map_err(|e| format!("Error writing output file: {}", e))?;
 
 	Ok(())
 }
@@ -252,13 +271,15 @@ fn downscale(app_m: &ArgMatches) -> Result<()>{
 		_ => unreachable!(),
 	};
 
-	let input = rusty_sr::read(&mut File::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+	let input = rusty_sr::read(&mut File::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).map_err(|e| format!("Error opening input file: {}", e))?)
+		.map_err(|e| format!("Error reading input file: {}", e))?;
 
-	let output = rusty_sr::downscale(input, factor, srgb).map_err(|e| e.to_string())?;
+	let output = rusty_sr::downscale(input, factor, srgb).map_err(|e| format!("Error while downscaling: {}", e))?;
 
 	print!(" Writing file...");
 	stdout().flush().ok();
-	rusty_sr::save(output, &mut File::create(Path::new(app_m.value_of("OUTPUT_FILE").expect("No output file given?"))).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+	rusty_sr::save(output, &mut File::create(Path::new(app_m.value_of("OUTPUT_FILE").expect("No output file given?"))).map_err(|e| format!("Error creating output file: {}", e))?)
+		.map_err(|e| format!("Error writing output file: {}", e))?;
 
 	println!(" Done");
 	Ok(())
@@ -277,18 +298,20 @@ fn upscale(app_m: &ArgMatches) -> ::std::result::Result<(), String>{
 		param_file.read_to_end(&mut data).expect("Reading parameter file failed");
 		UpscalingNetwork::Custom(rusty_sr::network_from_bytes(&data)?)
 	} else {
-		app_m.value_of("PARAMETERS").unwrap_or("natural").parse::<UpscalingNetwork>().map_err(|e| e.to_string())?
+		app_m.value_of("PARAMETERS").unwrap_or("natural").parse::<UpscalingNetwork>().map_err(|e| format!("Error parsing PARAMETERS: {}", e))?
 	};
 	println!("Upsampling using {}...", network);
 
 
-	let input = rusty_sr::read(&mut File::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+	let input = rusty_sr::read(&mut File::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).map_err(|e| format!("Error opening input file: {}", e))?)
+		.map_err(|e| format!("Error reading input file: {}", e))?;
 
-	let output = rusty_sr::upscale(input, network, Some(factor)).map_err(|e| e.to_string())?;
+	let output = rusty_sr::upscale(input, network, Some(factor)).map_err(|e| format!("Error while upscaling: {}", e))?;
 
 	print!(" Writing file...");
 	stdout().flush().ok();
-	rusty_sr::save(output, &mut File::create(Path::new(app_m.value_of("OUTPUT_FILE").expect("No output file given?"))).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+	rusty_sr::save(output, &mut File::create(Path::new(app_m.value_of("OUTPUT_FILE").expect("No output file given?"))).map_err(|e| format!("Error creating output file: {}", e))?)
+		.map_err(|e| format!("Error writing output file: {}", e))?;
 
 	println!(" Done");
 	Ok(())
