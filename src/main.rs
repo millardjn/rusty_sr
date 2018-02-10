@@ -352,7 +352,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		.map(|string| string.parse::<usize>().expect("Batch_size argument must be an integer"))
 		.unwrap_or(4);
 	assert!(batch_size > 0, "Batch_size ({}) must be greater than 0.", batch_size);
-	println!(" batch_size: {}", patch_size);
+	println!(" batch_size: {}", batch_size);
 
 	let quantise = app_m.is_present("QUANTISE");
 
