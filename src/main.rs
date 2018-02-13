@@ -213,16 +213,16 @@ fn main() {
 	.get_matches();
 	
 	if let Some(sub_m) = app_m.subcommand_matches("train") {
-		train(sub_m).unwrap_or_else(|err| println!("{}", err));
+		train(sub_m).map_err(|e| format!("Training error: {}", e))
 	} else if let Some(sub_m) = app_m.subcommand_matches("downscale") {
-		downscale(sub_m).unwrap_or_else(|err| println!("{}", err));
+		downscale(sub_m)
 	} else if let Some(sub_m) = app_m.subcommand_matches("psnr") {
-		psnr(sub_m).unwrap_or_else(|err| println!("{}", err));
+		psnr(sub_m)
 	} else if let Some(sub_m) = app_m.subcommand_matches("quantise") {
-		quantise(sub_m).unwrap_or_else(|err| println!("{}", err));
+		quantise(sub_m)
 	} else {
-		upscale(&app_m).unwrap_or_else(|err| println!("{}", err));
-	}
+		upscale(&app_m)
+	}.unwrap_or_else(|err| println!("{}", err));
 	
 }
 
@@ -258,7 +258,7 @@ fn quantise(app_m: &ArgMatches) -> ::std::result::Result<(), String>{
 	Ok(())
 }
 
-fn downscale(app_m: &ArgMatches) -> Result<()>{
+fn downscale(app_m: &ArgMatches) -> ::std::result::Result<(), String>{
 
 	let factor = match app_m.value_of("FACTOR") {
 		Some(string) => string.parse::<usize>().expect("Factor argument must be an integer"),
@@ -429,7 +429,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		CallbackSignal::Continue
 	});
 
-	add_validation(app_m,  recurse, &mut solver, &graph)?;
+	add_validation(app_m, recurse, &mut solver, &graph)?;
 
 	let params = params_option.unwrap_or_else(||graph.initialise_nodes(solver.parameters()).expect("Could not initialise parameters"));
 	println!("Beginning Training");
