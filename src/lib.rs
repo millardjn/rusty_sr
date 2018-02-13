@@ -92,7 +92,7 @@ fn shuffle(data: &[u8], stride: usize) -> Vec<u8> {
 	vec
 }
 
-/// Inverts shuffle()
+/// Inverts `shuffle()`
 fn unshuffle(data: &[u8], stride: usize) -> Vec<u8> {
 	let mut vec = vec![0; data.len()];
 	let mut inc = 0;
@@ -125,6 +125,10 @@ pub fn save(image: ArrayD<f32>, file: &mut File) -> ImageResult<()> {
 }
 
 
+/// Takes an image tensor of shape [1, H, W, 3] and returns one of shape [1, H/factor, W/factor, 3].
+/// 
+/// If `sRGB` is `true` the pooling operation averages over the image values as stored,
+/// if `false` then the sRGB values are temporarily converted to linear RGB, pooled, then converted back.
 #[allow(non_snake_case)]
 pub fn downscale(image: ArrayD<f32>, factor: usize, sRGB: bool) -> alumina::graph::Result<ArrayD<f32>> {
 	let graph = if sRGB {
@@ -141,6 +145,7 @@ pub fn downscale(image: ArrayD<f32>, factor: usize, sRGB: bool) -> alumina::grap
 	Ok(result.into_map().remove(&output_id).unwrap())
 }
 
+/// A container type for upscaling network definitions that implements FromStr.
 #[allow(non_camel_case_types)]
 pub enum UpscalingNetwork {
 	Natural,
@@ -214,7 +219,11 @@ impl FromStr for UpscalingNetwork {
 	}
 }
 
-
+/// Takes an image tensor of shape [1, H, W, 3] and returns one of shape [1, H*factor, W*factor, 3], where factor is determined by the network definition.
+/// 
+/// The exact results of the upscaling depend on the content on which the network being used was trained, and what loss it was trained to minimise.
+/// L2 loss maximises PSNR, where as L1 loss results in sharper edges.
+/// `bilinear_factor` is ignored unless the network is Bilinear.
 pub fn upscale(image: ArrayD<f32>, network: UpscalingNetwork, bilinear_factor: Option<usize>) -> alumina::graph::Result<ArrayD<f32>> {
 	let (params, graph) = network.create_network(bilinear_factor)?;
 
