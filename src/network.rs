@@ -147,8 +147,8 @@ pub fn downscale_lin_net(factor: usize) -> Result<GraphDef> {
 pub fn downscale_srgb_net(factor: usize) -> Result<GraphDef> {
 	let mut g = GraphDef::new();
 
-	let input_hr = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "downsample_input", tag![])?;
-	let output = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "downsample_output", tag![])?;
+	let input_hr = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "input", tag![])?;
+	let output = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "output", tag![])?;
 	
 	AvgPool::new(&input_hr, &output, &[1, factor, factor, 1]).add_to(&mut g, tag![])?;
 
