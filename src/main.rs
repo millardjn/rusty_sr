@@ -296,9 +296,9 @@ fn upscale(app_m: &ArgMatches) -> ::std::result::Result<(), String>{
 		let mut param_file = File::open(Path::new(file_str)).expect("Error opening parameter file");
 		let mut data = Vec::new();
 		param_file.read_to_end(&mut data).expect("Reading parameter file failed");
-		UpscalingNetwork::Custom(rusty_sr::network_from_bytes(&data)?)
+		UpscalingNetwork::new(rusty_sr::network_from_bytes(&data)?, "custom trained neural net")?
 	} else {
-		app_m.value_of("PARAMETERS").unwrap_or("natural").parse::<UpscalingNetwork>().map_err(|e| format!("Error parsing PARAMETERS: {}", e))?
+		UpscalingNetwork::from_label(app_m.value_of("PARAMETERS").unwrap_or("natural"), Some(factor)).map_err(|e| format!("Error parsing PARAMETERS: {}", e))?
 	};
 	println!("Upsampling using {}...", network);
 
@@ -306,7 +306,7 @@ fn upscale(app_m: &ArgMatches) -> ::std::result::Result<(), String>{
 	let input = rusty_sr::read(&mut File::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).map_err(|e| format!("Error opening input file: {}", e))?)
 		.map_err(|e| format!("Error reading input file: {}", e))?;
 
-	let output = rusty_sr::upscale(input, network, Some(factor)).map_err(|e| format!("Error while upscaling: {}", e))?;
+	let output = rusty_sr::upscale(input, network).map_err(|e| format!("Error while upscaling: {}", e))?;
 
 	print!(" Writing file...");
 	stdout().flush().ok();

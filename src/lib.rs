@@ -18,7 +18,6 @@ pub mod psnr;
 use std::fs::*;
 use std::io::{stdout, Write, Read};
 use std::num::FpCategory;
-use std::str::FromStr;
 use std::fmt;
 
 use bincode::{serialize, deserialize, Infinite};
@@ -33,11 +32,17 @@ use xz2::read::{XzEncoder, XzDecoder};
 use alumina::data::image_folder::{image_to_data, data_to_image};
 use alumina::graph::{GraphDef};
 
-const L1_SRGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L1_3_sRGB_imagenet.rsr");
+
 const L2_SRGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L2_3_sRGB_imagenet.rsr");
-const L2_RGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L2_3_RGB_imagenet.rsr");
 const L2_SRGB_ANIME_PARAMS: &'static [u8] = include_bytes!("res/L2_3_sRGB_anime.rsr");
+const L2_RGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L2_3_RGB_imagenet.rsr");
+// L2 RGB ANIME
+
+const L1_SRGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L1_3_sRGB_imagenet.rsr");
 const L1_SRGB_ANIME_PARAMS: &'static [u8] = include_bytes!("res/L1_3_sRGB_anime.rsr");
+// L1 RGB Natural
+// L1 RGB Anime
+
 
 /// A struct containing the network parameters and hyperparameters.
 #[derive(Debug, Serialize, Deserialize)]
@@ -145,90 +150,100 @@ pub fn downscale(image: ArrayD<f32>, factor: usize, sRGB: bool) -> alumina::grap
 	Ok(result.into_map().remove(&output_id).unwrap())
 }
 
-/// A container type for upscaling network definitions that implements FromStr.
-#[allow(non_camel_case_types)]
-pub enum UpscalingNetwork {
-	Natural,
-	Natural_L1,
-	Natural_RGB,
-	Anime,
-	Anime_L1,
-	Bilinear,
-	Custom(NetworkDescription),
+/// A container type for upscaling networks
+#[derive(Clone, Debug)]
+pub struct UpscalingNetwork {
+	graph: GraphDef,
+	parameters: Vec<ArrayD<f32>>,
+	display: String,
 }
 
 impl UpscalingNetwork {
-	fn create_network(&self, bilinear_factor: Option<usize>) -> ::std::result::Result<(Vec<ArrayD<f32>>, GraphDef), String> {
-		match self {
-			&UpscalingNetwork::Natural => {
+
+	pub fn new(desc: NetworkDescription, display: &str) -> ::std::result::Result<Self, String> {
+		Ok(UpscalingNetwork {
+			graph: inference_sr_net(desc.factor, desc.log_depth).map_err(|e| e.to_string())?,
+			parameters: desc.parameters,
+			display: display.to_string(),
+		})
+	}
+
+	/// Accepts labels: [natural, natural_L1, natural_rgb, anime, anime_L1, bilinear]
+	pub fn from_label(label: &str, bilinear_factor: Option<usize>) -> ::std::result::Result<Self, String> {
+		match label {
+			"natural" => {
 				let network_desc = network_from_bytes(L2_SRGB_NATURAL_PARAMS)?;
-				Ok((network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth).map_err(|e| e.to_string())?))
+				Ok(UpscalingNetwork {
+					graph: inference_sr_net(network_desc.factor, network_desc.log_depth).map_err(|e| e.to_string())?,
+					parameters: network_desc.parameters,
+					display: "neural net trained on natural images".to_string(),
+				})
 			},
-			&UpscalingNetwork::Natural_L1 => {
+			"natural_L1" => {
 				let network_desc = network_from_bytes(L1_SRGB_NATURAL_PARAMS)?;
-				Ok((network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth).map_err(|e| e.to_string())?))
+				Ok(UpscalingNetwork {
+					graph: inference_sr_net(network_desc.factor, network_desc.log_depth).map_err(|e| e.to_string())?,
+					parameters: network_desc.parameters,
+					display: "neural net trained on natural images with an L1 loss".to_string(),
+				})
 			},
-			&UpscalingNetwork::Natural_RGB => {
+			"natural_rgb" => {
 				let network_desc = network_from_bytes(L2_RGB_NATURAL_PARAMS)?;
-				Ok((network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth).map_err(|e| e.to_string())?))
+				Ok(UpscalingNetwork {
+					graph: inference_sr_net(network_desc.factor, network_desc.log_depth).map_err(|e| e.to_string())?,
+					parameters: network_desc.parameters,
+					display: "neural net trained on natural images with linear RGB downsampling".to_string(),
+				})
 			},
-			&UpscalingNetwork::Anime => {
+			"anime" => {
 				let network_desc = network_from_bytes(L2_SRGB_ANIME_PARAMS)?;
-				Ok((network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth).map_err(|e| e.to_string())?))
+				Ok(UpscalingNetwork {
+					graph: inference_sr_net(network_desc.factor, network_desc.log_depth).map_err(|e| e.to_string())?,
+					parameters: network_desc.parameters,
+					display: "neural net trained on animation images".to_string(),
+				})
 			},
-			&UpscalingNetwork::Anime_L1 => {
+			"anime_L1" => {
 				let network_desc = network_from_bytes(L1_SRGB_ANIME_PARAMS)?;
-				Ok((network_desc.parameters, inference_sr_net(network_desc.factor, network_desc.log_depth).map_err(|e| e.to_string())?))
+				Ok(UpscalingNetwork {
+					graph: inference_sr_net(network_desc.factor, network_desc.log_depth).map_err(|e| e.to_string())?,
+					parameters: network_desc.parameters,
+					display: "neural net trained on animation images with an L1 loss".to_string(),
+				})
 			},
-			&UpscalingNetwork::Bilinear => {
-				Ok((Vec::new(), bilinear_net(bilinear_factor.unwrap_or(3)).map_err(|e| e.to_string())?))
+			"bilinear" => {
+				Ok(UpscalingNetwork {
+					graph: bilinear_net(bilinear_factor.unwrap_or(3)).map_err(|e| e.to_string())?,
+					parameters: Vec::new(),
+					display: "bilinear interpolation".to_string(),
+				})
 			},
-			&UpscalingNetwork::Custom(ref network_desc) => {
-				Ok((network_desc.parameters.clone(), inference_sr_net(network_desc.factor, network_desc.log_depth).map_err(|e| e.to_string())?))
-			},
+			_ => Err(format!("Unsupported network type. Could not parse: {}", label)),
 		}
+	}
+
+	pub fn borrow_network(&self) -> (&GraphDef, &[ArrayD<f32>]) {
+		(&self.graph, &self.parameters)
 	}
 }
 
 impl fmt::Display for UpscalingNetwork {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		match self {
-			&UpscalingNetwork::Natural => write!(f, "neural net trained on natural images"),
-			&UpscalingNetwork::Natural_L1 => write!(f, "neural net trained on natural images with an L1 loss"),
-			&UpscalingNetwork::Natural_RGB => write!(f, "neural net trained on natural images with linear RGB downsampling"),
-			&UpscalingNetwork::Anime => write!(f, "neural net trained on animation images"),
-			&UpscalingNetwork::Anime_L1 => write!(f, "neural net trained on animation images with an L1 loss"),
-			&UpscalingNetwork::Bilinear => write!(f, "bilinear interpolation"),
-			&UpscalingNetwork::Custom(ref _network_desc) => write!(f, "custom trained neural net"),
-		}
+		write!(f, "{}", self.display)
 	}
 }
 
-impl FromStr for UpscalingNetwork {
-	type Err = String;
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		match s {
-			"natural" => Ok(UpscalingNetwork::Natural),
-			"natural_L1" => Ok(UpscalingNetwork::Natural_L1),
-			"natural_rgb"=> Ok(UpscalingNetwork::Natural_RGB),
-			"anime"=> Ok(UpscalingNetwork::Anime),
-			"anime_L1"=> Ok(UpscalingNetwork::Anime_L1),
-			"bilinear" => Ok(UpscalingNetwork::Bilinear),
-			_ => Err(format!("Unsupported network type. Could not parse: {}", s)),
-		}
-	}
-}
 
 /// Takes an image tensor of shape [1, H, W, 3] and returns one of shape [1, H*factor, W*factor, 3], where factor is determined by the network definition.
 /// 
 /// The exact results of the upscaling depend on the content on which the network being used was trained, and what loss it was trained to minimise.
 /// L2 loss maximises PSNR, where as L1 loss results in sharper edges.
 /// `bilinear_factor` is ignored unless the network is Bilinear.
-pub fn upscale(image: ArrayD<f32>, network: UpscalingNetwork, bilinear_factor: Option<usize>) -> alumina::graph::Result<ArrayD<f32>> {
-	let (params, graph) = network.create_network(bilinear_factor)?;
+pub fn upscale(image: ArrayD<f32>, network: UpscalingNetwork) -> alumina::graph::Result<ArrayD<f32>> {
+	let (graph, params) = network.borrow_network();
 
 	let mut input_vec = vec![image];
-	input_vec.extend(params);
+	input_vec.extend(params.iter().cloned());
 	let input_id = graph.node_id("input").value_id();
 	let param_ids: Vec<_> = graph.parameter_ids().iter().map(|node_id| node_id.value_id()).collect();
 	let mut subgraph_inputs = vec![input_id];
