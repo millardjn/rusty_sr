@@ -20,6 +20,7 @@ use std::iter;
 use clap::{Arg, App, SubCommand, AppSettings, ArgMatches};
 
 use alumina::opt::adam::Adam;
+use alumina::opt::emwa2::Emwa2;
 use alumina::data::image_folder::{ImageFolder, image_to_data};
 use alumina::data::{DataSet, DataStream, Cropping};
 use alumina::graph::{Result, GraphDef};
@@ -27,6 +28,7 @@ use alumina::opt::{Opt, UnboxedCallbacks, CallbackSignal};
 
 use rusty_sr::psnr;
 use rusty_sr::network::*;
+use rusty_sr::aligned_crop::*;
 use rusty_sr::{UpscalingNetwork, NetworkDescription};
 
 fn main() {
@@ -158,6 +160,107 @@ fn main() {
 			.empty_values(false)
 		)
 	)
+	.subcommand(SubCommand::with_name("train_prescaled")
+		.about("Train a new set of neural parameters on your own dataset")
+		.arg(Arg::with_name("TRAINING_TARGET_FOLDER")
+			.required(true)
+			.index(1)
+			.help("Images from this folder(or sub-folders) will be used as the target for training")
+		)
+		.arg(Arg::with_name("PARAMETER_FILE")
+			.required(true)
+			.index(2)
+			.help("Learned network parameters will be (over)written to this parameter file (.rsr)")
+		)
+		.arg(Arg::with_name("TRAINING_INPUT_FOLDER")
+			.required(true)
+			.short("i")
+			.long("input")
+			.help("Images from this folder(or sub-folders) will be used as the target for training, image names must match target folder")
+			.empty_values(false)
+			.multiple(true)
+			.number_of_values(1)
+		)
+		.arg(Arg::with_name("LEARNING_RATE")
+			.short("R")
+			.long("rate")
+			.help("The learning rate used by the Adam optimiser. Default: 3e-3")
+			.empty_values(false)
+		)
+		.arg(Arg::with_name("QUANTISE")
+			.short("q")
+			.long("quantise")
+			.help("Quantise the weights by zeroing the smallest 12 bits of each f32. Reduces parameter file size")
+			.takes_value(false)
+		)
+		.arg(Arg::with_name("TRAINING_LOSS")
+	 		.help("Selects whether the neural net learns to minimise the L1 or L2 loss. Default: L1")
+	 		.short("l")
+	 		.long("loss")
+	 		.value_name("LOSS")
+	 		.possible_values(&["L1", "L2"])
+	 		.empty_values(false)
+	 	)
+		.arg(Arg::with_name("RECURSE_SUBFOLDERS")
+			.short("r")
+			.long("recurse")
+			.help("Recurse into subfolders of training and validation folders looking for files")
+			.takes_value(false)
+		)
+		.arg(Arg::with_name("START_PARAMETERS")
+			.short("s")
+			.long("start")
+			.help("Start training from known parameters loaded from this .rsr file rather than random initialisation")
+			.empty_values(false)
+		)
+		.arg(Arg::with_name("FACTOR")
+			.short("f")
+			.long("factor")
+			.help("The integer upscaling factor of the network the be trained. Default: 3")
+			.empty_values(false)
+		)
+		.arg(Arg::with_name("LOG_DEPTH")
+			.short("d")
+			.long("log_depth")
+			.help("There will be 2^(log_depth)-1 hidden layers in the network the be trained. Default: 4")
+			.empty_values(false)
+		)
+		.arg(Arg::with_name("PATCH_SIZE")
+			.short("p")
+			.long("patch_size")
+			.help("The integer patch_size of the training input after downsampling. Default: 48")
+			.empty_values(false)
+		)
+		.arg(Arg::with_name("BATCH_SIZE")
+			.short("b")
+			.long("batch_size")
+			.help("The integer batch_size of the training input. Default: 4")
+			.empty_values(false)
+		)
+		.arg(Arg::with_name("VALIDATION_TARGET_FOLDER")
+			.requires("VALIDATION_INPUT_FOLDER")
+			.short("v")
+			.long("val_folder")
+			.help("Images from this folder(or sub-folders) will be used to evaluate training progress")
+			.empty_values(false)
+		)
+		.arg(Arg::with_name("VALIDATION_INPUT_FOLDER")
+			.short("x")
+			.long("val_folder")
+			.help("Images from this folder(or sub-folders) will be used to evaluate training progress")
+			.empty_values(false)
+			.multiple(true)
+			.number_of_values(1)
+		)
+		.arg(Arg::with_name("VAL_MAX")
+			.requires("VALIDATION_FOLDER")
+			.short("m")
+			.long("val_max")
+			.value_name("N")
+			.help("Set upper limit on number of images used for each validation pass")
+			.empty_values(false)
+		)
+	)
 	.subcommand(SubCommand::with_name("downscale")
 	 	.about("Downscale images")
 		.arg(Arg::with_name("FACTOR")
@@ -212,8 +315,11 @@ fn main() {
 	)
 	.get_matches();
 	
+
 	if let Some(sub_m) = app_m.subcommand_matches("train") {
-		train(sub_m).map_err(|e| format!("Training error: {}", e))
+		train(sub_m).map_err(|e| format!("Train error: {}", e))
+	} else if let Some(sub_m) = app_m.subcommand_matches("train_prescaled") {
+		train_prescaled(sub_m).map_err(|e| format!("Train_prescaled error: {}", e))
 	} else if let Some(sub_m) = app_m.subcommand_matches("downscale") {
 		downscale(sub_m)
 	} else if let Some(sub_m) = app_m.subcommand_matches("psnr") {
@@ -222,7 +328,8 @@ fn main() {
 		quantise(sub_m)
 	} else {
 		upscale(&app_m)
-	}.unwrap_or_else(|err| println!("{}", err));
+	}.unwrap();
+	//.unwrap_or_else(|err| println!("{}", err));
 	
 }
 
@@ -382,7 +489,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		param_file.read_to_end(&mut data).expect("Reading start parameter file failed");
 		let network_desc = rusty_sr::network_from_bytes(&data)?;
 		if let Some(factor) = factor_option {
-			if factor != network_desc.factor {
+			if factor != network_desc.factor as usize {
 				eprintln!("Using factor from parameter file ({}) rather than factor from argument ({})", network_desc.factor, factor);
 			}
 		}
@@ -392,7 +499,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 			}
 		}
 		params_option = Some(network_desc.parameters);
-		factor_option = Some(network_desc.factor);
+		factor_option = Some(network_desc.factor as usize);
 		log_depth_option = Some(network_desc.log_depth);
 	}
 
@@ -403,7 +510,9 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 	let log_depth = log_depth_option.unwrap_or(4);
 	println!(" log_depth: {}", log_depth);
 
-	let graph = training_sr_net(factor, log_depth, 1e-6, power, scale, srgb_downscale)?;
+	let global_node_factor = 0; // no need for global nodes for one downsampling method
+
+	let graph = training_sr_net(factor, log_depth, global_node_factor, 1e-6, power, scale, srgb_downscale)?;
 	
 	let mut training_stream = ImageFolder::new(training_folder, recurse)
 		.crop(0, &[patch_size*factor, patch_size*factor, 3], Cropping::Random)
@@ -411,17 +520,27 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		.batch(batch_size)
 		.buffered(16);
 
-	let mut solver = Adam::new(&graph)?
+	// let mut solver = Adam::new(&graph)?
+	// 	.rate(lr)
+	// 	.beta1(0.9)
+	// 	.beta2(0.99)
+	// 	.bias_correct(false);
+
+	let mut solver = Emwa2::new(&graph)?
+		//.rate(1e-4)
 		.rate(lr)
-		.beta1(0.9)
-		.beta2(0.99)
-		.bias_correct(false);
+		//.rate(1e-2)
+		.epsilon(1e-2)
+		.target_noise(1.0)
+		.beta_range(0.5, 0.999)
+		.long_reduction(20.0);
+
 
 	let mut step_count = 0;
 	solver.add_callback(move |data|{
 		if step_count % 100 == 0 {
 			let mut parameter_file = File::create(&param_file_path).expect("Could not make parameter file");
-			let bytes = rusty_sr::network_to_bytes(NetworkDescription{factor: factor, log_depth: log_depth, parameters: data.params.to_vec()}, quantise).unwrap();
+			let bytes = rusty_sr::network_to_bytes(NetworkDescription{factor: factor as u32, log_depth: log_depth, global_node_factor: global_node_factor as u32, parameters: data.params.to_vec()}, quantise).unwrap();
 			parameter_file.write_all(&bytes).expect("Could not save to parameter file");
 		}
 		println!("step {}\terr:{}\tchange:{}", step_count, data.err, data.change_norm);
@@ -501,4 +620,230 @@ fn add_validation(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &G
 	Ok(())
 }
 
+
+
+
+
+
+
+fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
+
+	println!("Training prescaled with:");
+	
+	let (power, scale) = match app_m.value_of("TRAINING_LOSS") {
+		Some("L1") | None => {println!(" L1 loss"); (1.0, 1.0/255.0)},
+		Some("L2") => {println!(" L2 loss"); (2.0, 1.0/255.0)},
+		_ => unreachable!(),
+	};
+
+	let lr = app_m.value_of("LEARNING_RATE")
+		.map(|string|string.parse::<f32>().expect("Learning rate argument must be a numeric value"))
+		.unwrap_or(3e-3);
+	if lr <= 0.0 {
+		eprintln!("Learning_rate ({}) probably should be greater than 0.", lr);
+	}
+	println!(" learning rate: {}", lr);
+
+	let patch_size = app_m.value_of("PATCH_SIZE")
+		.map(|string| string.parse::<usize>().expect("Patch_size argument must be an integer"))
+		.unwrap_or(48);
+	assert!(patch_size > 0, "Patch_size ({}) must be greater than 0.", patch_size);
+	println!(" patch_size: {}", patch_size);
+
+	let batch_size = app_m.value_of("BATCH_SIZE")
+		.map(|string| string.parse::<usize>().expect("Batch_size argument must be an integer"))
+		.unwrap_or(4);
+	assert!(batch_size > 0, "Batch_size ({}) must be greater than 0.", batch_size);
+	println!(" batch_size: {}", batch_size);
+
+	let quantise = app_m.is_present("QUANTISE");
+
+	let recurse = app_m.is_present("RECURSE_SUBFOLDERS");
+
+	let target_folder = app_m.value_of("TRAINING_TARGET_FOLDER").expect("No training target folder?");
+
+	let mut input_folders = app_m.values_of("TRAINING_INPUT_FOLDER").expect("No training input folder?");
+
+	let param_file_path = Path::new(app_m.value_of("PARAMETER_FILE").expect("No parameter file?")).to_path_buf();
+
+	let mut factor_option = None;
+	match app_m.value_of("FACTOR") {
+		Some(string) => factor_option = Some(string.parse::<usize>().expect("Factor argument must be an integer")),
+		_ => {},
+	}
+
+	let mut log_depth_option = None;
+	match app_m.value_of("LOG_DEPTH") {
+		Some(string) => log_depth_option = Some(string.parse::<u32>().expect("Log_depth argument must be an integer")),
+		_ => {},
+	}
+
+	let mut params_option = None;
+	if let Some(param_str) = app_m.value_of("START_PARAMETERS") {
+		println!(" initialising with parameters from: {}", param_file_path.to_string_lossy());
+		let mut param_file = File::open(Path::new(param_str)).expect("Error opening start parameter file");
+		let mut data = Vec::new();
+		param_file.read_to_end(&mut data).expect("Reading start parameter file failed");
+		let network_desc = rusty_sr::network_from_bytes(&data)?;
+		if let Some(factor) = factor_option {
+			if factor != network_desc.factor as usize {
+				eprintln!("Using factor from parameter file ({}) rather than factor from argument ({})", network_desc.factor, factor);
+			}
+		}
+		if let Some(log_depth) = log_depth_option {
+			if log_depth != network_desc.log_depth {
+				eprintln!("Using log_depth from parameter file ({}) rather than log_depth from argument ({})", network_desc.log_depth, log_depth);
+			}
+		}
+		params_option = Some(network_desc.parameters);
+		factor_option = Some(network_desc.factor as usize);
+		log_depth_option = Some(network_desc.log_depth);
+	}
+
+	let factor = factor_option.unwrap_or(3);
+	assert!(factor > 0, "factor ({}) must be greater than 0.", factor);
+	println!(" factor: {}", factor);
+
+	let log_depth = log_depth_option.unwrap_or(4);
+	println!(" log_depth: {}", log_depth);
+
+	let global_node_factor = 2; // no need for global nodes for one downsampling method
+
+	let graph = training_prescale_sr_net(factor as usize, log_depth, global_node_factor, 1e-6, power, scale)?;
+	
+	let initial_set = ImageFolder::new(input_folders.next().unwrap(), recurse)
+			.concat_components(ImageFolder::new(target_folder, recurse))
+			.boxed();
+
+	let set = input_folders.into_iter()
+		.fold(initial_set, |set, folder|{
+			ImageFolder::new(folder, recurse)
+				.concat_components(ImageFolder::new(target_folder, recurse))
+				.concat_elements(set)
+				.boxed()
+		});
+	
+
+	let mut training_stream = set
+		.aligned_crop(0, &[patch_size, patch_size, 3], Cropping::Random)
+		.and_crop(1, Some(factor))
+		.shuffle_random()
+		.batch(batch_size)
+		.buffered(16);
+
+	// let mut training_stream = ImageFolder::new(target_folder, recurse)
+	// 	.crop(0, &[patch_size*factor, patch_size*factor, 3], Cropping::Random)
+	// 	.shuffle_random()
+	// 	.batch(batch_size)
+	// 	.buffered(16);
+
+	let mut solver = Adam::new(&graph)?
+		.rate(lr)
+		.beta1(0.95)
+		.beta2(0.999)
+		.bias_correct(false);
+
+	let mut step_count = 0;
+	solver.add_callback(move |data|{
+		if step_count % 100 == 0 {
+			let mut parameter_file = File::create(&param_file_path).expect("Could not make parameter file");
+			let bytes = rusty_sr::network_to_bytes(NetworkDescription{factor: factor as u32, log_depth: log_depth, global_node_factor: global_node_factor as u32, parameters: data.params.to_vec()}, quantise).unwrap();
+			parameter_file.write_all(&bytes).expect("Could not save to parameter file");
+		}
+		println!("step {}\terr:{}\tchange:{}", step_count, data.err, data.change_norm);
+		step_count += 1;
+		CallbackSignal::Continue
+	});
+
+	add_validation_prescaled(app_m, recurse, &mut solver, &graph)?;
+
+	let params = params_option.unwrap_or_else(||graph.initialise_nodes(solver.parameters()).expect("Could not initialise parameters"));
+	println!("Beginning Training");
+	solver.optimise_from(&mut training_stream, params)?;	
+	println!("Done");
+	Ok(())
+}
+
+/// Add occasional validation set evaluation as solver callback
+fn add_validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &GraphDef) -> Result<()>{
+	if let Some(val_folder) = app_m.value_of("VALIDATION_TARGET_FOLDER"){
+
+		let mut input_folders = app_m.values_of("VALIDATION_INPUT_FOLDER").expect("No validation input folder?");
+
+		let input_id = graph.node_id("input").value_id();
+		let input_ids: Vec<_> = iter::once(input_id.clone()).chain(solver.parameters().iter().map(|node_id| node_id.value_id())).collect();
+		let output_id = graph.node_id("output").value_id();
+		let mut validation_subgraph = graph.subgraph(&input_ids, &[output_id.clone(), input_id.clone()])?;
+
+
+
+
+
+		let initial_set = ImageFolder::new(input_folders.next().unwrap(), recurse)
+				.concat_components(ImageFolder::new(val_folder, recurse))
+				.boxed();
+
+		let validation_set = input_folders.into_iter()
+			.fold(initial_set, |set, folder|{
+				ImageFolder::new(folder, recurse)
+					.concat_components(ImageFolder::new(val_folder, recurse))
+					.concat_elements(set)
+					.boxed()
+			});
+
+		let epoch_size = validation_set.length();
+		let mut validation_stream = validation_set
+			.shuffle_random()
+			.batch(1)
+			.buffered(8);
+
+
+
+		let n: usize = app_m.value_of("VAL_MAX").map(|val_max|{
+			cmp::min(epoch_size, val_max.parse::<usize>().expect("-val_max N must be a positive integer"))
+		}).unwrap_or(epoch_size);
+
+		let mut step_count = 0;
+		solver.add_boxed_callback(Box::new(move |data|{
+
+			if step_count % 100 == 0 {
+
+				let mut err_sum = 0.0;
+				let mut y_err_sum = 0.0;
+				let mut pix_sum = 0.0f32;
+
+				let mut psnr_sum = 0.0;
+				let mut y_psnr_sum = 0.0;
+
+				for _ in 0..n {
+					let mut validation_input = validation_stream.next();
+					let target = validation_input.remove(1);
+					validation_input.extend(data.params.to_vec());
+
+					let result = validation_subgraph.execute(validation_input).expect("Could not execute upsampling graph");
+					let output = result.get(&output_id).unwrap();
+					//let training_input = result.get(&training_input_id).unwrap();
+
+					let (err, y_err, pix) = psnr::psnr_calculation(output, target.view());
+
+					pix_sum += pix;
+					err_sum += err;
+					y_err_sum += y_err;
+
+					psnr_sum += -10.0*(err/pix).log10();
+					y_psnr_sum += -10.0*(y_err/pix).log10();
+				}
+
+				psnr_sum /= n as f32;
+				y_psnr_sum /= n as f32;
+				let psnr = -10.0*(err_sum/pix_sum).log10();
+				let y_psnr = -10.0*(y_err_sum/pix_sum).log10();
+				println!("Validation PixAvgPSNR:\t{}\tPixAvgY_PSNR:\t{}\tImgAvgPSNR:\t{}\tImgAvgY_PSNR:\t{}", psnr, y_psnr, psnr_sum, y_psnr_sum);
+			}
+			step_count += 1;
+			CallbackSignal::Continue
+		}));
+	}
+	Ok(())
+}
 
