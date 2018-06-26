@@ -20,7 +20,7 @@ use std::iter;
 use clap::{Arg, App, SubCommand, AppSettings, ArgMatches};
 
 use alumina::opt::adam::Adam;
-use alumina::opt::emwa2::Emwa2;
+//use alumina::opt::emwa2::Emwa2;
 use alumina::data::image_folder::{ImageFolder, image_to_data};
 use alumina::data::{DataSet, DataStream, Cropping};
 use alumina::graph::{Result, GraphDef};
@@ -235,6 +235,12 @@ fn main() {
 			.short("b")
 			.long("batch_size")
 			.help("The integer batch_size of the training input. Default: 4")
+			.empty_values(false)
+		)
+		.arg(Arg::with_name("GLOBAL_SIZE")
+			.short("g")
+			.long("global_node_factor")
+			.help("The relative size of the global (non-spatial) nodes in each layer. Default: 2")
 			.empty_values(false)
 		)
 		.arg(Arg::with_name("VALIDATION_TARGET_FOLDER")
@@ -520,25 +526,16 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		.batch(batch_size)
 		.buffered(16);
 
-	// let mut solver = Adam::new(&graph)?
-	// 	.rate(lr)
-	// 	.beta1(0.9)
-	// 	.beta2(0.99)
-	// 	.bias_correct(false);
-
-	let mut solver = Emwa2::new(&graph)?
-		//.rate(1e-4)
-		.rate(lr)
-		//.rate(1e-2)
-		.epsilon(1e-2)
-		.target_noise(1.0)
-		.beta_range(0.5, 0.999)
-		.long_reduction(20.0);
+	 let mut solver = Adam::new(&graph)?
+	 	.rate(lr)
+		.beta1(0.9)
+	 	.beta2(0.99)
+	 	.bias_correct(false);
 
 
 	let mut step_count = 0;
 	solver.add_callback(move |data|{
-		if step_count % 100 == 0 {
+		if step_count % 1000 == 0 {
 			let mut parameter_file = File::create(&param_file_path).expect("Could not make parameter file");
 			let bytes = rusty_sr::network_to_bytes(NetworkDescription{factor: factor as u32, log_depth: log_depth, global_node_factor: global_node_factor as u32, parameters: data.params.to_vec()}, quantise).unwrap();
 			parameter_file.write_all(&bytes).expect("Could not save to parameter file");
@@ -580,7 +577,7 @@ fn add_validation(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &G
 		let mut step_count = 0;
 		solver.add_boxed_callback(Box::new(move |data|{
 
-			if step_count % 100 == 0 {
+			if step_count % 1000 == 0 {
 
 				let mut err_sum = 0.0;
 				let mut y_err_sum = 0.0;
@@ -656,6 +653,11 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 	assert!(batch_size > 0, "Batch_size ({}) must be greater than 0.", batch_size);
 	println!(" batch_size: {}", batch_size);
 
+	let global_node_factor = app_m.value_of("GLOBAL_SIZE")
+		.map(|string| string.parse::<usize>().expect("Global_node_factor argument must be an integer"))
+		.unwrap_or(2);
+	println!(" global_node_factor: {}", global_node_factor);
+
 	let quantise = app_m.is_present("QUANTISE");
 
 	let recurse = app_m.is_present("RECURSE_SUBFOLDERS");
@@ -707,7 +709,7 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 	let log_depth = log_depth_option.unwrap_or(4);
 	println!(" log_depth: {}", log_depth);
 
-	let global_node_factor = 2; // no need for global nodes for one downsampling method
+
 
 	let graph = training_prescale_sr_net(factor as usize, log_depth, global_node_factor, 1e-6, power, scale)?;
 	
@@ -739,13 +741,13 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 
 	let mut solver = Adam::new(&graph)?
 		.rate(lr)
-		.beta1(0.95)
-		.beta2(0.999)
+		.beta1(0.9)
+		.beta2(0.99)
 		.bias_correct(false);
 
 	let mut step_count = 0;
 	solver.add_callback(move |data|{
-		if step_count % 100 == 0 {
+		if step_count % 1000 == 0 {
 			let mut parameter_file = File::create(&param_file_path).expect("Could not make parameter file");
 			let bytes = rusty_sr::network_to_bytes(NetworkDescription{factor: factor as u32, log_depth: log_depth, global_node_factor: global_node_factor as u32, parameters: data.params.to_vec()}, quantise).unwrap();
 			parameter_file.write_all(&bytes).expect("Could not save to parameter file");
@@ -806,7 +808,7 @@ fn add_validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt,
 		let mut step_count = 0;
 		solver.add_boxed_callback(Box::new(move |data|{
 
-			if step_count % 100 == 0 {
+			if step_count % 1000 == 0 {
 
 				let mut err_sum = 0.0;
 				let mut y_err_sum = 0.0;

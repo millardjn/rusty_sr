@@ -94,6 +94,7 @@ pub fn sr_net_base(factor: usize, log_depth: u32, global_node_factor: usize) -> 
 
 				ReduceMean::new(&new_active_node, &avg_node).axes(&[1, 2]).add_to(&mut g, tag![])?;
 				Linear::new(&avg_node, &linear_node).init(Linear::msra(1.0)).add_to(&mut g, tag![])?;
+				Bias::new(&linear_node).add_to(&mut g, tag![])?;
 				Spline::new(&linear_node, &linear_active_node).init(Spline::swan()).add_to(&mut g, tag![])?;
 
 				active_nodes.push(new_active_node);

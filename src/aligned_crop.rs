@@ -127,7 +127,8 @@ fn secondary_slice_args(factor: Option<usize>, arr_shape: &[usize], next_arr_sha
 	for (i, (&arr_dim, &next_arr_dim)) in arr_shape.iter().zip(next_arr_shape).enumerate() {
 		if let Some(factor) = factor {
 			if i < arr_shape.len()-1 {
-			assert_eq!(factor*arr_dim, next_arr_dim);
+				//eprintln!("arr_shape:{:?} next_arr_shape:{:?}", arr_shape, next_arr_shape);
+				assert_eq!(arr_dim, (next_arr_dim+factor-1)/factor);
 			}
 		}
 		next_crop_shape.push(crop_shape[i]*next_arr_dim/arr_dim);
