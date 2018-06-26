@@ -35,15 +35,8 @@ use alumina::data::image_folder::{image_to_data, data_to_image};
 use alumina::graph::{GraphDef};
 
 
-const L2_SRGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L2_3_sRGB_imagenet.rsr");
-const L2_SRGB_ANIME_PARAMS: &'static [u8] = include_bytes!("res/L2_3_sRGB_anime.rsr");
-const L2_RGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L2_3_RGB_imagenet.rsr");
-// L2 RGB ANIME
-
-const L1_SRGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L1_3_sRGB_imagenet.rsr");
-const L1_SRGB_ANIME_PARAMS: &'static [u8] = include_bytes!("res/L1_3_sRGB_anime.rsr");
-// L1 RGB Natural
-// L1 RGB Anime
+const L1_SRGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L1_x4_UCID_x1node.rsr");
+const L1_SRGB_ANIME_PARAMS: &'static [u8] = include_bytes!("res/L1_x4_Anime_x1node.rsr");
 
 
 /// A struct containing the network parameters and hyperparameters.
@@ -175,14 +168,6 @@ impl UpscalingNetwork {
 	pub fn from_label(label: &str, bilinear_factor: Option<usize>) -> ::std::result::Result<Self, String> {
 		match label {
 			"natural" => {
-				let network_desc = network_from_bytes(L2_SRGB_NATURAL_PARAMS)?;
-				Ok(UpscalingNetwork {
-					graph: inference_sr_net(network_desc.factor as usize, network_desc.log_depth, network_desc.global_node_factor as usize).map_err(|e| e.to_string())?,
-					parameters: network_desc.parameters,
-					display: "neural net trained on natural images".to_string(),
-				})
-			},
-			"natural_L1" => {
 				let network_desc = network_from_bytes(L1_SRGB_NATURAL_PARAMS)?;
 				Ok(UpscalingNetwork {
 					graph: inference_sr_net(network_desc.factor as usize, network_desc.log_depth, network_desc.global_node_factor as usize).map_err(|e| e.to_string())?,
@@ -190,23 +175,7 @@ impl UpscalingNetwork {
 					display: "neural net trained on natural images with an L1 loss".to_string(),
 				})
 			},
-			"natural_rgb" => {
-				let network_desc = network_from_bytes(L2_RGB_NATURAL_PARAMS)?;
-				Ok(UpscalingNetwork {
-					graph: inference_sr_net(network_desc.factor as usize, network_desc.log_depth, network_desc.global_node_factor as usize).map_err(|e| e.to_string())?,
-					parameters: network_desc.parameters,
-					display: "neural net trained on natural images with linear RGB downsampling".to_string(),
-				})
-			},
 			"anime" => {
-				let network_desc = network_from_bytes(L2_SRGB_ANIME_PARAMS)?;
-				Ok(UpscalingNetwork {
-					graph: inference_sr_net(network_desc.factor as usize, network_desc.log_depth, network_desc.global_node_factor as usize).map_err(|e| e.to_string())?,
-					parameters: network_desc.parameters,
-					display: "neural net trained on animation images".to_string(),
-				})
-			},
-			"anime_L1" => {
 				let network_desc = network_from_bytes(L1_SRGB_ANIME_PARAMS)?;
 				Ok(UpscalingNetwork {
 					graph: inference_sr_net(network_desc.factor as usize, network_desc.log_depth, network_desc.global_node_factor as usize).map_err(|e| e.to_string())?,
@@ -216,7 +185,7 @@ impl UpscalingNetwork {
 			},
 			"bilinear" => {
 				Ok(UpscalingNetwork {
-					graph: bilinear_net(bilinear_factor.unwrap_or(3)).map_err(|e| e.to_string())?,
+					graph: bilinear_net(bilinear_factor.unwrap_or(4)).map_err(|e| e.to_string())?,
 					parameters: Vec::new(),
 					display: "bilinear interpolation".to_string(),
 				})

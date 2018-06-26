@@ -52,7 +52,7 @@ fn main() {
 		.short("p")
 		.long("parameters")
 		.value_name("PARAMETERS")
-		.possible_values(&["natural", "natural_L1", "natural_rgb", "anime", "anime_L1", "bilinear"])
+		.possible_values(&["natural", "anime", "bilinear"])
 		.empty_values(false)
 	)
 	.arg(Arg::with_name("CUSTOM")
@@ -66,7 +66,7 @@ fn main() {
 	.arg(Arg::with_name("BILINEAR_FACTOR")
 		.short("f")
 		.long("factor")
-		.help("The integer upscaling factor used if bilinear upscaling is performed. Default 3")
+		.help("The integer upscaling factor used if bilinear upscaling is performed. Default 4")
 		.empty_values(false)
 	)
 	.subcommand(SubCommand::with_name("train")
@@ -124,7 +124,7 @@ fn main() {
 		.arg(Arg::with_name("FACTOR")
 			.short("f")
 			.long("factor")
-			.help("The integer upscaling factor of the network the be trained. Default: 3")
+			.help("The integer upscaling factor of the network the be trained. Default: 4")
 			.empty_values(false)
 		)
 		.arg(Arg::with_name("LOG_DEPTH")
@@ -216,7 +216,7 @@ fn main() {
 		.arg(Arg::with_name("FACTOR")
 			.short("f")
 			.long("factor")
-			.help("The integer upscaling factor of the network the be trained. Default: 3")
+			.help("The integer upscaling factor of the network the be trained. Default: 4")
 			.empty_values(false)
 		)
 		.arg(Arg::with_name("LOG_DEPTH")
@@ -401,7 +401,7 @@ fn downscale(app_m: &ArgMatches) -> ::std::result::Result<(), String>{
 fn upscale(app_m: &ArgMatches) -> ::std::result::Result<(), String>{
 	let factor = match app_m.value_of("BILINEAR_FACTOR") {
 		Some(string) => string.parse::<usize>().expect("Factor argument must be an integer"),
-		_ => 3,
+		_ => 4,
 	};
 
 	//-- Sort out parameters and graph
@@ -509,7 +509,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		log_depth_option = Some(network_desc.log_depth);
 	}
 
-	let factor = factor_option.unwrap_or(3);
+	let factor = factor_option.unwrap_or(4);
 	assert!(factor > 0, "factor ({}) must be greater than 0.", factor);
 	println!(" factor: {}", factor);
 
@@ -702,7 +702,7 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 		log_depth_option = Some(network_desc.log_depth);
 	}
 
-	let factor = factor_option.unwrap_or(3);
+	let factor = factor_option.unwrap_or(4);
 	assert!(factor > 0, "factor ({}) must be greater than 0.", factor);
 	println!(" factor: {}", factor);
 
@@ -728,7 +728,7 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 
 	let mut training_stream = set
 		.aligned_crop(0, &[patch_size, patch_size, 3], Cropping::Random)
-		.and_crop(1, Some(factor))
+		.and_crop(1, factor)
 		.shuffle_random()
 		.batch(batch_size)
 		.buffered(16);
