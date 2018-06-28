@@ -23,7 +23,7 @@ pub struct AlignedCropSet<S: DataSet> {
 	set: S,
 	fill: IndexMap<usize, f32>,
 	main_crop: (usize, Vec<usize>, Cropping),
-	other_crops: IndexSet<(usize, usize)>,
+	other_crops: IndexSet<(usize, Vec<usize>)>,
 }
 
 impl<S: DataSet> AlignedCropSet<S> {
@@ -38,8 +38,8 @@ impl<S: DataSet> AlignedCropSet<S> {
 	}
 
 	/// Crop another component
-	pub fn and_crop(mut self, component: usize, factor: usize) -> Self {
-		self.other_crops.insert((component, factor));
+	pub fn and_crop(mut self, component: usize, factors: &[usize]) -> Self {
+		self.other_crops.insert((component, factors.to_vec()));
 		self
 	}
 
@@ -72,9 +72,10 @@ impl<S: DataSet> DataSet for AlignedCropSet<S> {
 		let arr = mem::replace(&mut data[component], ArrayD::zeros(IxDyn(&[])));
 		let mut arr_shape = arr.shape().to_vec();
 
-		for &(other_component, ref factor) in self.other_crops.iter() {
+
+		for &(other_component, ref factors) in self.other_crops.iter() {
 			for (i, dim) in  data[other_component].shape().iter().enumerate() {
-				arr_shape[i] = ::std::cmp::min(arr_shape[i], dim/factor);
+				arr_shape[i] = ::std::cmp::min(arr_shape[i], dim/factors[i]);
 			}
 		}
 		
@@ -83,10 +84,10 @@ impl<S: DataSet> DataSet for AlignedCropSet<S> {
 		mem::replace(&mut data[component], crop(arr, crop_shape, fill, input_slice_arg.clone(), output_slice_arg.clone())) ;
 
 
-		for &(other_component, factor) in self.other_crops.iter() {
+		for &(other_component, ref factors) in self.other_crops.iter() {
 			let next_arr = mem::replace(&mut data[other_component], ArrayD::zeros(IxDyn(&[])));
 
-			let (next_crop_shape, next_input_slice_arg, next_output_slice_arg) = secondary_slice_args(factor, crop_shape, input_slice_arg.clone(), output_slice_arg.clone());
+			let (next_crop_shape, next_input_slice_arg, next_output_slice_arg) = secondary_slice_args(factors, crop_shape, input_slice_arg.clone(), output_slice_arg.clone());
 
 			let fill = self.fill.get(&other_component).cloned().unwrap_or(0.0);
 			mem::replace(&mut data[other_component], crop(next_arr, &next_crop_shape, fill, next_input_slice_arg.clone(), next_output_slice_arg.clone()));
@@ -122,16 +123,16 @@ fn crop(arr: ArrayD<f32>, crop_shape: &[usize], fill: f32, input_slice_arg: Smal
 	out_arr
 }
 
-fn secondary_slice_args(factor: usize, crop_shape: &[usize], input_slice_arg: SmallVec<[Si; 6]>, output_slice_arg: SmallVec<[Si; 6]>) -> (SmallVec<[usize; 6]>, SmallVec<[Si; 6]>, SmallVec<[Si; 6]>) {
+fn secondary_slice_args(factors: &[usize], crop_shape: &[usize], input_slice_arg: SmallVec<[Si; 6]>, output_slice_arg: SmallVec<[Si; 6]>) -> (SmallVec<[usize; 6]>, SmallVec<[Si; 6]>, SmallVec<[Si; 6]>) {
 
 	let mut next_crop_shape = SmallVec::new();
 	let mut next_input_slice_arg: SmallVec<[Si; 6]> = SmallVec::new();
 	let mut next_output_slice_arg: SmallVec<[Si; 6]> = SmallVec::new();
 	
 	for i in 0..crop_shape.len() {
-		next_crop_shape.push(crop_shape[i]*factor);
+		next_crop_shape.push(crop_shape[i]*factors[i]);
 
-		let factor = factor as isize;
+		let factor = factors[i] as isize;
 		if let Si(start, Some(end), 1) = input_slice_arg[i]{
 			next_input_slice_arg.push(Si(start*factor, Some(end*factor), 1))
 		}

@@ -524,12 +524,12 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		.crop(0, &[patch_size*factor, patch_size*factor, 3], Cropping::Random)
 		.shuffle_random()
 		.batch(batch_size)
-		.buffered(16);
+		.buffered(32);
 
 	 let mut solver = Adam::new(&graph)?
 	 	.rate(lr)
-		.beta1(0.9)
-	 	.beta2(0.99)
+		.beta1(0.95)
+	 	.beta2(0.995)
 	 	.bias_correct(false);
 
 
@@ -728,21 +728,16 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 
 	let mut training_stream = set
 		.aligned_crop(0, &[patch_size, patch_size, 3], Cropping::Random)
-		.and_crop(1, factor)
+		.and_crop(1, &[factor, factor, 1])
 		.shuffle_random()
 		.batch(batch_size)
-		.buffered(16);
+		.buffered(32);
 
-	// let mut training_stream = ImageFolder::new(target_folder, recurse)
-	// 	.crop(0, &[patch_size*factor, patch_size*factor, 3], Cropping::Random)
-	// 	.shuffle_random()
-	// 	.batch(batch_size)
-	// 	.buffered(16);
 
 	let mut solver = Adam::new(&graph)?
 		.rate(lr)
-		.beta1(0.9)
-		.beta2(0.99)
+		.beta1(0.95)
+		.beta2(0.995)
 		.bias_correct(false);
 
 	let mut step_count = 0;
