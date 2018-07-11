@@ -524,7 +524,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 		.crop(0, &[patch_size*factor, patch_size*factor, 3], Cropping::Random)
 		.shuffle_random()
 		.batch(batch_size)
-		.buffered(32);
+		.buffered(2);
 
 	 let mut solver = Adam::new(&graph)?
 	 	.rate(lr)
@@ -568,7 +568,7 @@ fn add_validation(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &G
 		let mut validation_stream = validation_set
 			.shuffle_random()
 			.batch(1)
-			.buffered(8);
+			.buffered(2);
 
 		let n: usize = app_m.value_of("VAL_MAX").map(|val_max|{
 			cmp::min(epoch_size, val_max.parse::<usize>().expect("-val_max N must be a positive integer"))
@@ -731,8 +731,13 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 		.and_crop(1, &[factor, factor, 1])
 		.shuffle_random()
 		.batch(batch_size)
-		.buffered(32);
+		.buffered(16);
 
+	// let mut training_stream = ImageFolder::new(target_folder, recurse)
+	// 	.crop(0, &[patch_size*factor, patch_size*factor, 3], Cropping::Random)
+	// 	.shuffle_random()
+	// 	.batch(batch_size)
+	// 	.buffered(16);
 
 	let mut solver = Adam::new(&graph)?
 		.rate(lr)
@@ -792,7 +797,7 @@ fn add_validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt,
 		let mut validation_stream = validation_set
 			.shuffle_random()
 			.batch(1)
-			.buffered(8);
+			.buffered(2);
 
 
 
