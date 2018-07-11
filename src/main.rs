@@ -18,6 +18,7 @@ use std::cmp;
 use std::iter;
 
 use clap::{Arg, App, SubCommand, AppSettings, ArgMatches};
+use ndarray::ArrayD;
 
 use alumina::opt::adam::Adam;
 //use alumina::opt::emwa2::Emwa2;
@@ -532,22 +533,29 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 	 	.beta2(0.995)
 	 	.bias_correct(false);
 
+	let params = params_option.unwrap_or_else(||graph.initialise_nodes(solver.parameters()).expect("Could not initialise parameters"));
 
-	let mut step_count = 0;
 	solver.add_callback(move |data|{
-		if step_count % 1000 == 0 {
+		if data.step + 1 % 1000 == 0 {
 			let mut parameter_file = File::create(&param_file_path).expect("Could not make parameter file");
 			let bytes = rusty_sr::network_to_bytes(NetworkDescription{factor: factor as u32, log_depth: log_depth, global_node_factor: global_node_factor as u32, parameters: data.params.to_vec()}, quantise).unwrap();
 			parameter_file.write_all(&bytes).expect("Could not save to parameter file");
 		}
-		println!("step {}\terr:{}\tchange:{}", step_count, data.err, data.change_norm);
-		step_count += 1;
+		println!("step {}\terr:{}\tchange:{}", data.step, data.err, data.change_norm);
 		CallbackSignal::Continue
 	});
 
-	add_validation(app_m, recurse, &mut solver, &graph)?;
+	let mut validation = validation(app_m, recurse, &mut solver, &graph)?;
 
-	let params = params_option.unwrap_or_else(||graph.initialise_nodes(solver.parameters()).expect("Could not initialise parameters"));
+	validation(&params);
+
+	solver.add_boxed_callback(Box::new(move |data|{
+		if data.step+1 % 1000 == 0 {
+			validation(data.params)
+		}
+		CallbackSignal::Continue
+	}));
+	
 	println!("Beginning Training");
 	solver.optimise_from(&mut training_stream, params)?;	
 	println!("Done");
@@ -555,7 +563,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 }
 
 /// Add occasional validation set evaluation as solver callback
-fn add_validation(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &GraphDef) -> Result<()>{
+fn validation(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &GraphDef) -> Result<Box<FnMut(&[ArrayD<f32>])>>{
 	if let Some(val_folder) = app_m.value_of("VALIDATION_FOLDER"){
 
 		let training_input_id = graph.node_id("training_input").value_id();
@@ -575,9 +583,7 @@ fn add_validation(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &G
 		}).unwrap_or(epoch_size);
 
 		let mut step_count = 0;
-		solver.add_boxed_callback(Box::new(move |data|{
-
-			if step_count % 1000 == 0 {
+		Ok(Box::new(move |params|{
 
 				let mut err_sum = 0.0;
 				let mut y_err_sum = 0.0;
@@ -588,7 +594,7 @@ fn add_validation(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &G
 
 				for _ in 0..n {
 					let mut training_input = validation_stream.next();
-					training_input.extend(data.params.to_vec());
+					training_input.extend(params.to_vec());
 
 					let result = validation_subgraph.execute(training_input).expect("Could not execute upsampling graph");
 					let output = result.get(&output_id).unwrap();
@@ -609,12 +615,13 @@ fn add_validation(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &G
 				let psnr = -10.0*(err_sum/pix_sum).log10();
 				let y_psnr = -10.0*(y_err_sum/pix_sum).log10();
 				println!("Validation PixAvgPSNR:\t{}\tPixAvgY_PSNR:\t{}\tImgAvgPSNR:\t{}\tImgAvgY_PSNR:\t{}", psnr, y_psnr, psnr_sum, y_psnr_sum);
-			}
-			step_count += 1;
-			CallbackSignal::Continue
-		}));
+
+		}))
+	} else {
+		Ok(Box::new(|_params|{
+			
+		}))
 	}
-	Ok(())
 }
 
 
@@ -745,21 +752,29 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 		.beta2(0.995)
 		.bias_correct(false);
 
-	let mut step_count = 0;
+	let params = params_option.unwrap_or_else(||graph.initialise_nodes(solver.parameters()).expect("Could not initialise parameters"));
+
 	solver.add_callback(move |data|{
-		if step_count % 1000 == 0 {
+		if data.step+1 % 1000 == 0 {
 			let mut parameter_file = File::create(&param_file_path).expect("Could not make parameter file");
 			let bytes = rusty_sr::network_to_bytes(NetworkDescription{factor: factor as u32, log_depth: log_depth, global_node_factor: global_node_factor as u32, parameters: data.params.to_vec()}, quantise).unwrap();
 			parameter_file.write_all(&bytes).expect("Could not save to parameter file");
 		}
-		println!("step {}\terr:{}\tchange:{}", step_count, data.err, data.change_norm);
-		step_count += 1;
+		println!("step {}\terr:{}\tchange:{}", data.step, data.err, data.change_norm);
 		CallbackSignal::Continue
 	});
 
-	add_validation_prescaled(app_m, recurse, &mut solver, &graph)?;
+	let mut validation = validation_prescaled(app_m, recurse, &mut solver, &graph)?;
 
-	let params = params_option.unwrap_or_else(||graph.initialise_nodes(solver.parameters()).expect("Could not initialise parameters"));
+	validation(&params);
+
+	solver.add_boxed_callback(Box::new(move |data|{
+		if data.step+1 % 1000 == 0 {
+			validation(data.params)
+		}
+		CallbackSignal::Continue
+	}));
+
 	println!("Beginning Training");
 	solver.optimise_from(&mut training_stream, params)?;	
 	println!("Done");
@@ -767,7 +782,7 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 }
 
 /// Add occasional validation set evaluation as solver callback
-fn add_validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &GraphDef) -> Result<()>{
+fn validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &GraphDef) -> Result<Box<FnMut(&[ArrayD<f32>])>>{
 	if let Some(val_folder) = app_m.value_of("VALIDATION_TARGET_FOLDER"){
 
 		let mut input_folders = app_m.values_of("VALIDATION_INPUT_FOLDER").expect("No validation input folder?");
@@ -776,8 +791,6 @@ fn add_validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt,
 		let input_ids: Vec<_> = iter::once(input_id.clone()).chain(solver.parameters().iter().map(|node_id| node_id.value_id())).collect();
 		let output_id = graph.node_id("output").value_id();
 		let mut validation_subgraph = graph.subgraph(&input_ids, &[output_id.clone(), input_id.clone()])?;
-
-
 
 
 
@@ -805,47 +818,47 @@ fn add_validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt,
 			cmp::min(epoch_size, val_max.parse::<usize>().expect("-val_max N must be a positive integer"))
 		}).unwrap_or(epoch_size);
 
-		let mut step_count = 0;
-		solver.add_boxed_callback(Box::new(move |data|{
+		
+		Ok(Box::new(move |params|{
 
-			if step_count % 1000 == 0 {
+			let mut err_sum = 0.0;
+			let mut y_err_sum = 0.0;
+			let mut pix_sum = 0.0f32;
 
-				let mut err_sum = 0.0;
-				let mut y_err_sum = 0.0;
-				let mut pix_sum = 0.0f32;
+			let mut psnr_sum = 0.0;
+			let mut y_psnr_sum = 0.0;
 
-				let mut psnr_sum = 0.0;
-				let mut y_psnr_sum = 0.0;
+			for _ in 0..n {
+				let mut validation_input = validation_stream.next();
+				let target = validation_input.remove(1);
+				validation_input.extend(params.to_vec());
 
-				for _ in 0..n {
-					let mut validation_input = validation_stream.next();
-					let target = validation_input.remove(1);
-					validation_input.extend(data.params.to_vec());
+				let result = validation_subgraph.execute(validation_input).expect("Could not execute upsampling graph");
+				let output = result.get(&output_id).unwrap();
+				//let training_input = result.get(&training_input_id).unwrap();
 
-					let result = validation_subgraph.execute(validation_input).expect("Could not execute upsampling graph");
-					let output = result.get(&output_id).unwrap();
-					//let training_input = result.get(&training_input_id).unwrap();
+				let (err, y_err, pix) = psnr::psnr_calculation(output, target.view());
 
-					let (err, y_err, pix) = psnr::psnr_calculation(output, target.view());
+				pix_sum += pix;
+				err_sum += err;
+				y_err_sum += y_err;
 
-					pix_sum += pix;
-					err_sum += err;
-					y_err_sum += y_err;
-
-					psnr_sum += -10.0*(err/pix).log10();
-					y_psnr_sum += -10.0*(y_err/pix).log10();
-				}
-
-				psnr_sum /= n as f32;
-				y_psnr_sum /= n as f32;
-				let psnr = -10.0*(err_sum/pix_sum).log10();
-				let y_psnr = -10.0*(y_err_sum/pix_sum).log10();
-				println!("Validation PixAvgPSNR:\t{}\tPixAvgY_PSNR:\t{}\tImgAvgPSNR:\t{}\tImgAvgY_PSNR:\t{}", psnr, y_psnr, psnr_sum, y_psnr_sum);
+				psnr_sum += -10.0*(err/pix).log10();
+				y_psnr_sum += -10.0*(y_err/pix).log10();
 			}
-			step_count += 1;
-			CallbackSignal::Continue
-		}));
+
+			psnr_sum /= n as f32;
+			y_psnr_sum /= n as f32;
+			let psnr = -10.0*(err_sum/pix_sum).log10();
+			let y_psnr = -10.0*(y_err_sum/pix_sum).log10();
+			println!("Validation PixAvgPSNR:\t{}\tPixAvgY_PSNR:\t{}\tImgAvgPSNR:\t{}\tImgAvgY_PSNR:\t{}", psnr, y_psnr, psnr_sum, y_psnr_sum);
+
+			
+		}))
+	} else {
+		Ok(Box::new(|_params|{
+			
+		}))
 	}
-	Ok(())
 }
 
