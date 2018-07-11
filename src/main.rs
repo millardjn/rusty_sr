@@ -536,7 +536,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 	let params = params_option.unwrap_or_else(||graph.initialise_nodes(solver.parameters()).expect("Could not initialise parameters"));
 
 	solver.add_callback(move |data|{
-		if data.step + 1 % 1000 == 0 {
+		if (data.step + 1) % 1000 == 0 {
 			let mut parameter_file = File::create(&param_file_path).expect("Could not make parameter file");
 			let bytes = rusty_sr::network_to_bytes(NetworkDescription{factor: factor as u32, log_depth: log_depth, global_node_factor: global_node_factor as u32, parameters: data.params.to_vec()}, quantise).unwrap();
 			parameter_file.write_all(&bytes).expect("Could not save to parameter file");
@@ -550,7 +550,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 	validation(&params);
 
 	solver.add_boxed_callback(Box::new(move |data|{
-		if data.step+1 % 1000 == 0 {
+		if (data.step+1) % 1000 == 0 {
 			validation(data.params)
 		}
 		CallbackSignal::Continue
@@ -755,7 +755,7 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 	let params = params_option.unwrap_or_else(||graph.initialise_nodes(solver.parameters()).expect("Could not initialise parameters"));
 
 	solver.add_callback(move |data|{
-		if data.step+1 % 1000 == 0 {
+		if (data.step+1) % 1000 == 0 {
 			let mut parameter_file = File::create(&param_file_path).expect("Could not make parameter file");
 			let bytes = rusty_sr::network_to_bytes(NetworkDescription{factor: factor as u32, log_depth: log_depth, global_node_factor: global_node_factor as u32, parameters: data.params.to_vec()}, quantise).unwrap();
 			parameter_file.write_all(&bytes).expect("Could not save to parameter file");
@@ -769,7 +769,7 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 	validation(&params);
 
 	solver.add_boxed_callback(Box::new(move |data|{
-		if data.step+1 % 1000 == 0 {
+		if (data.step+1) % 1000 == 0 {
 			validation(data.params)
 		}
 		CallbackSignal::Continue
