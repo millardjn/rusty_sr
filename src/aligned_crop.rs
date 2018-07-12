@@ -1,6 +1,6 @@
 use indexmap::{IndexMap, IndexSet};
 use rand::{thread_rng, Rng};
-use ndarray::{ArrayD, ArrayViewD, IxDyn, Si};
+use ndarray::{ArrayD, IxDyn, Si};
 use smallvec::SmallVec;
 use alumina::data::DataSet;
 
