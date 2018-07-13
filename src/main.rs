@@ -490,7 +490,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 
 	let mut params_option = None;
 	if let Some(param_str) = app_m.value_of("START_PARAMETERS") {
-		println!(" initialising with parameters from: {}", param_file_path.to_string_lossy());
+		println!(" initialising with parameters from: {}", param_str);
 		let mut param_file = File::open(Path::new(param_str)).expect("Error opening start parameter file");
 		let mut data = Vec::new();
 		param_file.read_to_end(&mut data).expect("Reading start parameter file failed");
@@ -519,7 +519,7 @@ fn train(app_m: &ArgMatches) -> Result<()> {
 
 	let global_node_factor = 0; // no need for global nodes for one downsampling method
 
-	let graph = training_sr_net(factor, log_depth, global_node_factor, 1e-6, power, scale, srgb_downscale)?;
+	let graph = training_sr_net(factor, log_depth, global_node_factor, 1e-5, power, scale, srgb_downscale)?;
 	
 	let mut training_stream = ImageFolder::new(training_folder, recurse)
 		.crop(0, &[patch_size*factor, patch_size*factor, 3], Cropping::Random)
@@ -582,7 +582,6 @@ fn validation(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &Graph
 			cmp::min(epoch_size, val_max.parse::<usize>().expect("-val_max N must be a positive integer"))
 		}).unwrap_or(epoch_size);
 
-		let mut step_count = 0;
 		Ok(Box::new(move |params|{
 
 				let mut err_sum = 0.0;
@@ -689,7 +688,7 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 
 	let mut params_option = None;
 	if let Some(param_str) = app_m.value_of("START_PARAMETERS") {
-		println!(" initialising with parameters from: {}", param_file_path.to_string_lossy());
+		println!(" initialising with parameters from: {}", param_str);
 		let mut param_file = File::open(Path::new(param_str)).expect("Error opening start parameter file");
 		let mut data = Vec::new();
 		param_file.read_to_end(&mut data).expect("Reading start parameter file failed");
@@ -718,7 +717,7 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 
 
 
-	let graph = training_prescale_sr_net(factor as usize, log_depth, global_node_factor, 1e-6, power, scale)?;
+	let graph = training_prescale_sr_net(factor as usize, log_depth, global_node_factor, 1e-5, power, scale)?;
 	
 	let initial_set = ImageFolder::new(input_folders.next().unwrap(), recurse)
 			.concat_components(ImageFolder::new(target_folder, recurse))
@@ -812,13 +811,10 @@ fn validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, gra
 			.batch(1)
 			.buffered(2);
 
-
-
 		let n: usize = app_m.value_of("VAL_MAX").map(|val_max|{
 			cmp::min(epoch_size, val_max.parse::<usize>().expect("-val_max N must be a positive integer"))
 		}).unwrap_or(epoch_size);
 
-		
 		Ok(Box::new(move |params|{
 
 			let mut err_sum = 0.0;

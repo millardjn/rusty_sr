@@ -58,7 +58,7 @@ pub fn sr_net_base(factor: usize, log_depth: u32, global_node_factor: usize) -> 
 		let (new_conv_node, init_weight, init_weight2) = if i < hidden_layers {
 			(g.new_node(shape![Unknown, Unknown, Unknown, hidden_layer_channels], format!("conv{}", i), tag![])?,
 			1.0,
-			0.01)
+			0.5)
 		} else {
 			(g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS*factor*factor], "expand", tag![])?,
 			0.01,
@@ -93,7 +93,7 @@ pub fn sr_net_base(factor: usize, log_depth: u32, global_node_factor: usize) -> 
 				let linear_active_node = g.new_node(shape![Unknown, global_node_factor*hidden_layer_channels], format!("linear_activ{}", i), tag![])?;
 
 				ReduceMean::new(&new_active_node, &avg_node).axes(&[1, 2]).add_to(&mut g, tag![])?;
-				Linear::new(&avg_node, &linear_node).init(Linear::msra(1.0)).add_to(&mut g, tag![])?;
+				Linear::new(&avg_node, &linear_node).init(Linear::msra(init_weight2)).add_to(&mut g, tag![])?;
 				Bias::new(&linear_node).add_to(&mut g, tag![])?;
 				Spline::new(&linear_node, &linear_active_node).init(Spline::swan()).add_to(&mut g, tag![])?;
 
@@ -166,7 +166,7 @@ pub fn training_sr_net(factor: usize, log_depth: u32, global_node_factor: usize,
 		LinearToSrgb::new(&input_pool, &input).add_to(&mut g, tag![])?;
 	}
 
-	Robust::new(&output, &training_input, loss_scale, loss_power).multiplier(100.0*loss_scale*loss_power).mean_axes(&[0, 1, 2, 3]).add_to(&mut g, tag![])?;
+	Robust::new(&output, &training_input, loss_scale, loss_power).multiplier(1000.0*loss_scale*loss_power).mean_axes(&[0, 1, 2, 3]).add_to(&mut g, tag![])?;
 
 	ShapeConstraint::new(&training_input, &output).single(1, |d| d).single(2, |d| d).add_to(&mut g, tag![])?;
 
@@ -187,7 +187,7 @@ pub fn training_prescale_sr_net(factor: usize, log_depth: u32, global_node_facto
 
 	let training_input = g.new_node(shape![Unknown, Unknown, Unknown, CHANNELS], "training_input", tag![])?;
 
-	Robust::new(&output, &training_input, loss_scale, loss_power).multiplier(100.0*loss_scale*loss_power).mean_axes(&[0, 1, 2, 3]).add_to(&mut g, tag![])?;
+	Robust::new(&output, &training_input, loss_scale, loss_power).multiplier(1000.0*loss_scale*loss_power).mean_axes(&[0, 1, 2, 3]).add_to(&mut g, tag![])?;
 
 	//ShapeConstraint::new(&training_input, &output).single(1, |d| d).single(2, |d| d).add_to(&mut g, tag![])?;
 	ShapeConstraint::new(&input, &output).single(1, move |d| d*factor).single(2, move |d| d*factor).add_to(&mut g, tag![])?;
