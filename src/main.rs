@@ -576,7 +576,7 @@ fn validation(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &Graph
 		let mut validation_stream = validation_set
 			.shuffle_random()
 			.batch(1)
-			.buffered(2);
+			.buffered(4);
 
 		let n: usize = app_m.value_of("VAL_MAX").map(|val_max|{
 			cmp::min(epoch_size, val_max.parse::<usize>().expect("-val_max N must be a positive integer"))
@@ -730,20 +730,13 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 				.concat_elements(set)
 				.boxed()
 		});
-	
 
 	let mut training_stream = set
 		.aligned_crop(0, &[patch_size, patch_size, 3], Cropping::Random)
 		.and_crop(1, &[factor, factor, 1])
 		.shuffle_random()
 		.batch(batch_size)
-		.buffered(16);
-
-	// let mut training_stream = ImageFolder::new(target_folder, recurse)
-	// 	.crop(0, &[patch_size*factor, patch_size*factor, 3], Cropping::Random)
-	// 	.shuffle_random()
-	// 	.batch(batch_size)
-	// 	.buffered(16);
+		.buffered(2);
 
 	let mut solver = Adam::new(&graph)?
 		.rate(lr)
@@ -809,7 +802,7 @@ fn validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, gra
 		let mut validation_stream = validation_set
 			.shuffle_random()
 			.batch(1)
-			.buffered(2);
+			.buffered(4);
 
 		let n: usize = app_m.value_of("VAL_MAX").map(|val_max|{
 			cmp::min(epoch_size, val_max.parse::<usize>().expect("-val_max N must be a positive integer"))
