@@ -704,14 +704,16 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 	let graph = training_prescale_sr_net(factor as usize, log_depth, global_node_factor, 1e-5, power, scale)?;
 
 	let input_folder = Path::new(input_folders.next().unwrap());
-	let target_folder = input_folder.parent().expect("Don't use root as a training folder.").to_path_buf().push("Base");
+	let mut target_folder = input_folder.parent().expect("Don't use root as a training folder.").to_path_buf();
+	target_folder.push("Base");
 	let initial_set = ImageFolder::new(input_folder, recurse)
 			.concat_components(ImageFolder::new(target_folder, recurse))
 			.boxed();
 
 	let set = input_folders.into_iter()
 		.fold(initial_set, |set, folder|{
-			let target_folder = input_folder.parent().expect("Don't use root as a training folder.").to_path_buf().push("Base");
+			let mut target_folder = input_folder.parent().expect("Don't use root as a training folder.").to_path_buf();
+			target_folder.push("Base");
 			ImageFolder::new(folder, recurse)
 				.concat_components(ImageFolder::new(target_folder, recurse))
 				.concat_elements(set)
@@ -762,9 +764,7 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 
 /// Add occasional validation set evaluation as solver callback
 fn validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &GraphDef) -> Result<Box<FnMut(&[ArrayD<f32>])>>{
-	if let Some(input_folders) = app_m.values_of("VALIDATION_INPUT_FOLDER"){
-
-		let mut input_folders = app_m.values_of("VALIDATION_INPUT_FOLDER").expect("No validation input folder?");
+	if let Some(mut input_folders) = app_m.values_of("VALIDATION_INPUT_FOLDER"){
 
 		let input_id = graph.node_id("input").value_id();
 		let input_ids: Vec<_> = iter::once(input_id.clone()).chain(solver.parameters().iter().map(|node_id| node_id.value_id())).collect();
@@ -772,14 +772,16 @@ fn validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, gra
 		let mut validation_subgraph = graph.subgraph(&input_ids, &[output_id.clone(), input_id.clone()])?;
 
 		let input_folder = Path::new(input_folders.next().unwrap());
-		let val_folder = input_folder.parent().expect("Don't use root as a validation folder.").to_path_buf().push("Base");
+		let mut val_folder = input_folder.parent().expect("Don't use root as a validation folder.").to_path_buf();
+		val_folder.push("Base");
 		let initial_set = ImageFolder::new(input_folder, recurse)
 				.concat_components(ImageFolder::new(val_folder, recurse))
 				.boxed();
 
 		let validation_set = input_folders.into_iter()
 			.fold(initial_set, |set, folder|{
-				let val_folder = Path::new(input_folder).parent().expect("Don't use root as a validation folder.").to_path_buf().push("Base");
+				let mut val_folder = Path::new(input_folder).parent().expect("Don't use root as a validation folder.").to_path_buf();
+				val_folder.push("Base");
 				ImageFolder::new(folder, recurse)
 					.concat_components(ImageFolder::new(val_folder, recurse))
 					.concat_elements(set)
