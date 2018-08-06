@@ -711,10 +711,10 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 			.boxed();
 
 	let set = input_folders.into_iter()
-		.fold(initial_set, |set, folder|{
-			let mut target_folder = input_folder.parent().expect("Don't use root as a training folder.").to_path_buf();
+		.fold(initial_set, |set, input_folder|{
+			let mut target_folder = Path::new(input_folder).parent().expect("Don't use root as a training folder.").to_path_buf();
 			target_folder.push("Base");
-			ImageFolder::new(folder, recurse)
+			ImageFolder::new(input_folder, recurse)
 				.concat_components(ImageFolder::new(target_folder, recurse))
 				.concat_elements(set)
 				.boxed()
@@ -779,10 +779,10 @@ fn validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, gra
 				.boxed();
 
 		let validation_set = input_folders.into_iter()
-			.fold(initial_set, |set, folder|{
+			.fold(initial_set, |set, input_folder|{
 				let mut val_folder = Path::new(input_folder).parent().expect("Don't use root as a validation folder.").to_path_buf();
 				val_folder.push("Base");
-				ImageFolder::new(folder, recurse)
+				ImageFolder::new(input_folder, recurse)
 					.concat_components(ImageFolder::new(val_folder, recurse))
 					.concat_elements(set)
 					.boxed()
