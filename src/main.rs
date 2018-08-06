@@ -704,14 +704,14 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 	let graph = training_prescale_sr_net(factor as usize, log_depth, global_node_factor, 1e-5, power, scale)?;
 
 	let input_folder = Path::new(input_folders.next().unwrap());
-	let target_folder = input_folder.parent().expect("Don't use root as a training folder.").to_path_buf();
+	let target_folder = input_folder.parent().expect("Don't use root as a training folder.").to_path_buf().push("Base");
 	let initial_set = ImageFolder::new(input_folder, recurse)
 			.concat_components(ImageFolder::new(target_folder, recurse))
 			.boxed();
 
 	let set = input_folders.into_iter()
 		.fold(initial_set, |set, folder|{
-			let target_folder = input_folder.parent().expect("Don't use root as a training folder.").to_path_buf();
+			let target_folder = input_folder.parent().expect("Don't use root as a training folder.").to_path_buf().push("Base");
 			ImageFolder::new(folder, recurse)
 				.concat_components(ImageFolder::new(target_folder, recurse))
 				.concat_elements(set)
@@ -772,14 +772,14 @@ fn validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, gra
 		let mut validation_subgraph = graph.subgraph(&input_ids, &[output_id.clone(), input_id.clone()])?;
 
 		let input_folder = Path::new(input_folders.next().unwrap());
-		let val_folder = input_folder.parent().expect("Don't use root as a validation folder.").to_path_buf();
+		let val_folder = input_folder.parent().expect("Don't use root as a validation folder.").to_path_buf().push("Base");
 		let initial_set = ImageFolder::new(input_folder, recurse)
 				.concat_components(ImageFolder::new(val_folder, recurse))
 				.boxed();
 
 		let validation_set = input_folders.into_iter()
 			.fold(initial_set, |set, folder|{
-				let val_folder = Path::new(input_folder).parent().expect("Don't use root as a validation folder.").to_path_buf();
+				let val_folder = Path::new(input_folder).parent().expect("Don't use root as a validation folder.").to_path_buf().push("Base");
 				ImageFolder::new(folder, recurse)
 					.concat_components(ImageFolder::new(val_folder, recurse))
 					.concat_elements(set)
