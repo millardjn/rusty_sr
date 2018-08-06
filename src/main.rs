@@ -163,21 +163,16 @@ fn main() {
 	)
 	.subcommand(SubCommand::with_name("train_prescaled")
 		.about("Train a new set of neural parameters on your own dataset")
-		.arg(Arg::with_name("TRAINING_TARGET_FOLDER")
-			.required(true)
-			.index(1)
-			.help("Images from this folder(or sub-folders) will be used as the target for training")
-		)
 		.arg(Arg::with_name("PARAMETER_FILE")
 			.required(true)
-			.index(2)
+			.index(1)
 			.help("Learned network parameters will be (over)written to this parameter file (.rsr)")
 		)
 		.arg(Arg::with_name("TRAINING_INPUT_FOLDER")
 			.required(true)
 			.short("i")
 			.long("input")
-			.help("Images from this folder(or sub-folders) will be used as the target for training, image names must match target folder")
+			.help("Images from this folder(or sub-folders) will be used as the target for training, comparing against target images in neighbour folder 'Base'")
 			.empty_values(false)
 			.multiple(true)
 			.number_of_values(1)
@@ -244,17 +239,10 @@ fn main() {
 			.help("The relative size of the global (non-spatial) nodes in each layer. Default: 2")
 			.empty_values(false)
 		)
-		.arg(Arg::with_name("VALIDATION_TARGET_FOLDER")
-			.requires("VALIDATION_INPUT_FOLDER")
-			.short("v")
-			.long("val_folder")
-			.help("Images from this folder(or sub-folders) will be used to evaluate training progress")
-			.empty_values(false)
-		)
 		.arg(Arg::with_name("VALIDATION_INPUT_FOLDER")
 			.short("x")
 			.long("val_folder")
-			.help("Images from this folder(or sub-folders) will be used to evaluate training progress")
+			.help("Images from this folder(or sub-folders) will be used to evaluate training progress, comparing against target images in neighbour folder 'Base'")
 			.empty_values(false)
 			.multiple(true)
 			.number_of_values(1)
@@ -335,8 +323,7 @@ fn main() {
 		quantise(sub_m)
 	} else {
 		upscale(&app_m)
-	}.unwrap();
-	//.unwrap_or_else(|err| println!("{}", err));
+	}.unwrap_or_else(|err| println!("{:?}", err));
 	
 }
 
@@ -668,8 +655,6 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 
 	let recurse = app_m.is_present("RECURSE_SUBFOLDERS");
 
-	let target_folder = app_m.value_of("TRAINING_TARGET_FOLDER").expect("No training target folder?");
-
 	let mut input_folders = app_m.values_of("TRAINING_INPUT_FOLDER").expect("No training input folder?");
 
 	let param_file_path = Path::new(app_m.value_of("PARAMETER_FILE").expect("No parameter file?")).to_path_buf();
@@ -716,15 +701,17 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 	println!(" log_depth: {}", log_depth);
 
 
-
 	let graph = training_prescale_sr_net(factor as usize, log_depth, global_node_factor, 1e-5, power, scale)?;
-	
-	let initial_set = ImageFolder::new(input_folders.next().unwrap(), recurse)
+
+	let input_folder = Path::new(input_folders.next().unwrap());
+	let target_folder = input_folder.parent().expect("Don't use root as a training folder.").to_path_buf();
+	let initial_set = ImageFolder::new(input_folder, recurse)
 			.concat_components(ImageFolder::new(target_folder, recurse))
 			.boxed();
 
 	let set = input_folders.into_iter()
 		.fold(initial_set, |set, folder|{
+			let target_folder = input_folder.parent().expect("Don't use root as a training folder.").to_path_buf();
 			ImageFolder::new(folder, recurse)
 				.concat_components(ImageFolder::new(target_folder, recurse))
 				.concat_elements(set)
@@ -775,7 +762,7 @@ fn train_prescaled(app_m: &ArgMatches) -> Result<()> {
 
 /// Add occasional validation set evaluation as solver callback
 fn validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, graph: &GraphDef) -> Result<Box<FnMut(&[ArrayD<f32>])>>{
-	if let Some(val_folder) = app_m.value_of("VALIDATION_TARGET_FOLDER"){
+	if let Some(input_folders) = app_m.values_of("VALIDATION_INPUT_FOLDER"){
 
 		let mut input_folders = app_m.values_of("VALIDATION_INPUT_FOLDER").expect("No validation input folder?");
 
@@ -784,14 +771,15 @@ fn validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, gra
 		let output_id = graph.node_id("output").value_id();
 		let mut validation_subgraph = graph.subgraph(&input_ids, &[output_id.clone(), input_id.clone()])?;
 
-
-
-		let initial_set = ImageFolder::new(input_folders.next().unwrap(), recurse)
+		let input_folder = Path::new(input_folders.next().unwrap());
+		let val_folder = input_folder.parent().expect("Don't use root as a validation folder.").to_path_buf();
+		let initial_set = ImageFolder::new(input_folder, recurse)
 				.concat_components(ImageFolder::new(val_folder, recurse))
 				.boxed();
 
 		let validation_set = input_folders.into_iter()
 			.fold(initial_set, |set, folder|{
+				let val_folder = Path::new(input_folder).parent().expect("Don't use root as a validation folder.").to_path_buf();
 				ImageFolder::new(folder, recurse)
 					.concat_components(ImageFolder::new(val_folder, recurse))
 					.concat_elements(set)
@@ -824,7 +812,6 @@ fn validation_prescaled(app_m: &ArgMatches, recurse: bool, solver: &mut Opt, gra
 
 				let result = validation_subgraph.execute(validation_input).expect("Could not execute upsampling graph");
 				let output = result.get(&output_id).unwrap();
-				//let training_input = result.get(&training_input_id).unwrap();
 
 				let (err, y_err, pix) = psnr::psnr_calculation(output, target.view());
 
