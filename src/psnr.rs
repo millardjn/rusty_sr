@@ -1,7 +1,7 @@
 
 use std::cmp;
 
-use ndarray::{ArrayViewD, Axis, Zip, Si};
+use ndarray::{ArrayViewD, Axis, Zip};
 
 
 /// Takes two tensors of shape [H, W, 3] and
@@ -25,9 +25,8 @@ pub fn psnr_calculation(image1: ArrayViewD<f32>, image2: ArrayViewD<f32>) -> (f3
 	let min_height = cmp::min(image1.shape()[0], image2.shape()[0]);
 	let min_width = cmp::min(image1.shape()[1], image2.shape()[2]);
 
-	let slice_arg: [Si; 3] = [Si(0, Some(min_height as isize), 1), Si(0, Some(min_width as isize), 1), Si(0, Some(3), 1)];
-	let image1 = image1.slice(&slice_arg);
-	let image2 = image2.slice(&slice_arg);
+	let image1 = image1.slice(s![0..min_height, 0..min_width, 0..3]);
+	let image2 = image2.slice(s![0..min_height, 0..min_width, 0..3]);
 
 	
 	let mut err = 0.0;

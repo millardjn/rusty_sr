@@ -3,9 +3,8 @@ extern crate alumina;
 extern crate rand;
 extern crate clap;
 extern crate image;
-extern crate ndarray;
-#[macro_use]
-extern crate serde_derive;
+#[macro_use] extern crate ndarray;
+#[macro_use] extern crate serde_derive;
 extern crate serde;
 extern crate bincode;
 extern crate xz2;
@@ -22,7 +21,7 @@ use std::io::{stdout, Write, Read};
 use std::num::FpCategory;
 use std::fmt;
 
-use bincode::{serialize, deserialize, Infinite};
+use bincode::{serialize, deserialize};
 use image::{ImageFormat, ImageResult};
 
 use network::*;
@@ -74,7 +73,7 @@ pub fn network_to_bytes(mut desc: NetworkDescription, quantise: bool) -> ::std::
 		}
 	}
 	
-	let serialized: Vec<u8> = serialize(&desc, Infinite).map_err(|e| format!("NetworkDescription encoding failed: {}", e))?;
+	let serialized: Vec<u8> = serialize(&desc).map_err(|e| format!("NetworkDescription encoding failed: {}", e))?;
 	let shuffled = shuffle(&serialized, 4);
 	let compressed = XzEncoder::new(shuffled.as_slice(), 7).bytes().collect::<::std::result::Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
 	Ok(compressed)
@@ -122,7 +121,7 @@ pub fn read(file: &mut File) -> ImageResult<ArrayD<f32>> {
 /// Save tensor of shape [1, H, W, 3] as .png image. Converts floats in range of [0, 1] to bytes in range [0, 255].
 pub fn save(image: ArrayD<f32>, file: &mut File) -> ImageResult<()> {
 	stdout().flush().ok();
-	data_to_image(image.subview(Axis(0), 0)).save(file, ImageFormat::PNG)
+	data_to_image(image.subview(Axis(0), 0)).write_to(file, ImageFormat::PNG)
 }
 
 
