@@ -210,7 +210,7 @@ impl fmt::Display for UpscalingNetwork {
 /// The exact results of the upscaling depend on the content on which the network being used was trained, and what loss it was trained to minimise.
 /// L2 loss maximises PSNR, where as L1 loss results in sharper edges.
 /// `bilinear_factor` is ignored unless the network is Bilinear.
-pub fn upscale(image: ArrayD<f32>, network: UpscalingNetwork) -> alumina::graph::Result<ArrayD<f32>> {
+pub fn upscale(image: ArrayD<f32>, network: &UpscalingNetwork) -> alumina::graph::Result<ArrayD<f32>> {
 	let (graph, params) = network.borrow_network();
 
 	let mut input_vec = vec![image];

@@ -17,6 +17,7 @@ dependencies = [
  "matches 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "matrixmultiply_mt 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "ndarray 0.11.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ndarray-parallel 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "num_cpus 1.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "odds 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.5.5 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -362,6 +363,15 @@ dependencies = [
  "num-complex 0.1.43 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-traits 0.1.43 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.71 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "ndarray-parallel"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "ndarray 0.11.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rayon 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -818,6 +828,7 @@ dependencies = [
 "checksum matrixmultiply_mt 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)" = "fd24eb4fe1f41c83329f0dc6bcab9c6350b86b093f60ffe1365c970a356795d9"
 "checksum memoffset 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "0f9dc261e2b62d7a622bf416ea3c5245cdd5d9a7fcc428c0d06804dfce1775b3"
 "checksum ndarray 0.11.2 (registry+https://github.com/rust-lang/crates.io-index)" = "0e3d24c5ba54015d7d5203ca6f00d4cc16c71042bf7f7be26f091236f390a16a"
+"checksum ndarray-parallel 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)" = "64a353a8b944e6e93e6784d4588fb3f888acf643829e0d3f5244834b1bebbdac"
 "checksum nodrop 0.1.12 (registry+https://github.com/rust-lang/crates.io-index)" = "9a2228dca57108069a5262f2ed8bd2e82496d2e074a06d1ccc7ce1687b6ae0a2"
 "checksum num-complex 0.1.43 (registry+https://github.com/rust-lang/crates.io-index)" = "b288631d7878aaf59442cffd36910ea604ecd7745c36054328595114001c9656"
 "checksum num-derive 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "0d2c31b75c36a993d30c7a13d70513cb93f02acafdd5b7ba250f9b0e18615de7"
