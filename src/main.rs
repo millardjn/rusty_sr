@@ -407,7 +407,7 @@ fn upscale(app_m: &ArgMatches) -> ::std::result::Result<(), String>{
 	let input = rusty_sr::read(&mut File::open(Path::new(app_m.value_of("INPUT_FILE").expect("No input file given?"))).map_err(|e| format!("Error opening input file: {}", e))?)
 		.map_err(|e| format!("Error reading input file: {}", e))?;
 
-	let output = rusty_sr::upscale(input, network).map_err(|e| format!("Error while upscaling: {}", e))?;
+	let output = rusty_sr::upscale(input, &network).map_err(|e| format!("Error while upscaling: {}", e))?;
 
 	print!(" Writing file...");
 	stdout().flush().ok();
