@@ -1,0 +1,9 @@
+comment_width = 120 #default:80
+hard_tabs = true
+merge_imports = true
+match_block_trailing_comma = true
+max_width = 120
+normalize_comments = true
+reorder_impl_items = true
+use_try_shorthand = true
+wrap_comments = true

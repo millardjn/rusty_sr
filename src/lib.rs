@@ -1,46 +1,50 @@
 #[macro_use]
 extern crate alumina;
-extern crate rand;
 extern crate clap;
 extern crate image;
-#[macro_use] extern crate ndarray;
-#[macro_use] extern crate serde_derive;
-extern crate serde;
+extern crate rand;
+#[macro_use]
+extern crate ndarray;
+#[macro_use]
+extern crate serde_derive;
 extern crate bincode;
-extern crate xz2;
 extern crate byteorder;
 extern crate indexmap;
+extern crate serde;
 extern crate smallvec;
+extern crate xz2;
 
+pub mod aligned_crop;
 pub mod network;
 pub mod psnr;
-pub mod aligned_crop;
 
-use std::fs::*;
-use std::io::{stdout, Write, Read};
-use std::num::FpCategory;
-use std::fmt;
+use std::{
+	fmt,
+	fs::*,
+	io::{stdout, Read, Write},
+	num::FpCategory,
+};
 
-use bincode::{serialize, deserialize};
+use bincode::{deserialize, serialize};
 use image::{ImageFormat, ImageResult};
 
 use network::*;
 
-use ndarray::{ArrayD, IxDyn, Axis};
 use byteorder::{BigEndian, ByteOrder};
-use xz2::read::{XzEncoder, XzDecoder};
+use ndarray::{ArrayD, Axis, IxDyn};
+use xz2::read::{XzDecoder, XzEncoder};
 
-use alumina::data::image_folder::{image_to_data, data_to_image};
-use alumina::graph::{GraphDef};
-
+use alumina::{
+	data::image_folder::{data_to_image, image_to_data},
+	graph::GraphDef,
+};
 
 const L1_SRGB_NATURAL_PARAMS: &'static [u8] = include_bytes!("res/L1_x4_UCID_x1node.rsr");
 const L1_SRGB_ANIME_PARAMS: &'static [u8] = include_bytes!("res/L1_x4_Anime_x1node.rsr");
 
-
 /// A struct containing the network parameters and hyperparameters.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NetworkDescription {
+pub struct NetworkDescriptionOld {
 	pub factor: u32,
 	pub log_depth: u32,
 	pub global_node_factor: u32,
@@ -48,10 +52,36 @@ pub struct NetworkDescription {
 }
 
 /// Decompresses and deserialises the NetworkDescription from the byte format used in .rsr. files
-pub fn network_from_bytes(data: &[u8]) -> ::std::result::Result<NetworkDescription, String> {
-	let decompressed = XzDecoder::new(data).bytes().collect::<::std::result::Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+pub fn old_network_from_bytes(data: &[u8]) -> ::std::result::Result<NetworkDescriptionOld, String> {
+	let decompressed = XzDecoder::new(data)
+		.bytes()
+		.collect::<::std::result::Result<Vec<_>, _>>()
+		.map_err(|e| e.to_string())?;
 	let unshuffled = unshuffle(&decompressed, 4);
-	let deserialized: NetworkDescription = deserialize(&unshuffled).map_err(|e| format!("NetworkDescription decoding failed: {}", e))?;
+	let deserialized: NetworkDescriptionOld =
+		deserialize(&unshuffled).map_err(|e| format!("NetworkDescription decoding failed: {}", e))?;
+	Ok(deserialized)
+}
+
+/// A struct containing the network parameters and hyperparameters.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NetworkDescription {
+	pub factor: u32,
+	pub width: u32,
+	pub log_depth: u32,
+	pub global_node_factor: u32,
+	pub parameters: Vec<ArrayD<f32>>,
+}
+
+/// Decompresses and deserialises the NetworkDescription from the byte format used in .rsr. files
+pub fn network_from_bytes(data: &[u8]) -> ::std::result::Result<NetworkDescription, String> {
+	let decompressed = XzDecoder::new(data)
+		.bytes()
+		.collect::<::std::result::Result<Vec<_>, _>>()
+		.map_err(|e| e.to_string())?;
+	let unshuffled = unshuffle(&decompressed, 4);
+	let deserialized: NetworkDescription =
+		deserialize(&unshuffled).map_err(|e| format!("NetworkDescription decoding failed: {}", e))?;
 	Ok(deserialized)
 }
 
@@ -60,7 +90,7 @@ pub fn network_from_bytes(data: &[u8]) -> ::std::result::Result<NetworkDescripti
 pub fn network_to_bytes(mut desc: NetworkDescription, quantise: bool) -> ::std::result::Result<Vec<u8>, String> {
 	for arr in &mut desc.parameters {
 		for e in arr.iter_mut() {
-			if let FpCategory::Subnormal = e.classify(){
+			if let FpCategory::Subnormal = e.classify() {
 				*e = 0.0;
 			}
 			if quantise {
@@ -72,10 +102,13 @@ pub fn network_to_bytes(mut desc: NetworkDescription, quantise: bool) -> ::std::
 			}
 		}
 	}
-	
+
 	let serialized: Vec<u8> = serialize(&desc).map_err(|e| format!("NetworkDescription encoding failed: {}", e))?;
 	let shuffled = shuffle(&serialized, 4);
-	let compressed = XzEncoder::new(shuffled.as_slice(), 7).bytes().collect::<::std::result::Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+	let compressed = XzEncoder::new(shuffled.as_slice(), 7)
+		.bytes()
+		.collect::<::std::result::Result<Vec<_>, _>>()
+		.map_err(|e| e.to_string())?;
 	Ok(compressed)
 }
 
@@ -84,8 +117,8 @@ pub fn network_to_bytes(mut desc: NetworkDescription, quantise: bool) -> ::std::
 fn shuffle(data: &[u8], stride: usize) -> Vec<u8> {
 	let mut vec = Vec::with_capacity(data.len());
 	for offset in 0..stride {
-		for i in 0..(data.len()-offset+stride-1)/stride {
-			vec.push(data[offset + i*stride])
+		for i in 0..(data.len() - offset + stride - 1) / stride {
+			vec.push(data[offset + i * stride])
 		}
 	}
 	debug_assert_eq!(vec.len(), data.len());
@@ -97,8 +130,8 @@ fn unshuffle(data: &[u8], stride: usize) -> Vec<u8> {
 	let mut vec = vec![0; data.len()];
 	let mut inc = 0;
 	for offset in 0..stride {
-		for i in 0..(data.len()-offset+stride-1)/stride {
-			vec[offset + i*stride] = data[inc];
+		for i in 0..(data.len() - offset + stride - 1) / stride {
+			vec[offset + i * stride] = data[inc];
 			inc += 1;
 		}
 	}
@@ -106,11 +139,11 @@ fn unshuffle(data: &[u8], stride: usize) -> Vec<u8> {
 	vec
 }
 
-
 /// Returns an rgb image converted to a tensor of floats in the range of [0, 1] and of shape, [1, H, W, 3];
 pub fn read(file: &mut File) -> ImageResult<ArrayD<f32>> {
 	let mut vec = vec![];
-	file.read_to_end(&mut vec).map_err(|err| image::ImageError::IoError(err))?;
+	file.read_to_end(&mut vec)
+		.map_err(|err| image::ImageError::IoError(err))?;
 	let input_image = image::load_from_memory(&vec)?;
 	let input = image_to_data(&input_image);
 	let shape = input.shape().to_vec();
@@ -124,18 +157,17 @@ pub fn save(image: ArrayD<f32>, file: &mut File) -> ImageResult<()> {
 	data_to_image(image.subview(Axis(0), 0)).write_to(file, ImageFormat::PNG)
 }
 
-
 /// Takes an image tensor of shape [1, H, W, 3] and returns one of shape [1, H/factor, W/factor, 3].
-/// 
+///
 /// If `sRGB` is `true` the pooling operation averages over the image values as stored,
 /// if `false` then the sRGB values are temporarily converted to linear RGB, pooled, then converted back.
 #[allow(non_snake_case)]
 pub fn downscale(image: ArrayD<f32>, factor: usize, sRGB: bool) -> alumina::graph::Result<ArrayD<f32>> {
 	let graph = if sRGB {
-			downscale_srgb_net(factor)?
-		} else {
-			downscale_lin_net(factor)?
-		};
+		downscale_srgb_net(factor)?
+	} else {
+		downscale_lin_net(factor)?
+	};
 
 	let input_id = graph.node_id("input").value_id();
 	let output_id = graph.node_id("output").value_id();
@@ -154,10 +186,14 @@ pub struct UpscalingNetwork {
 }
 
 impl UpscalingNetwork {
-
 	pub fn new(desc: NetworkDescription, display: &str) -> ::std::result::Result<Self, String> {
 		Ok(UpscalingNetwork {
-			graph: inference_sr_net(desc.factor as usize, desc.log_depth, desc.global_node_factor as usize).map_err(|e| e.to_string())?,
+			graph: inference_sr_net(
+				desc.factor as usize,
+				desc.width,
+				desc.log_depth,
+				desc.global_node_factor as usize,
+			).map_err(|e| e.to_string())?,
 			parameters: desc.parameters,
 			display: display.to_string(),
 		})
@@ -167,28 +203,36 @@ impl UpscalingNetwork {
 	pub fn from_label(label: &str, bilinear_factor: Option<usize>) -> ::std::result::Result<Self, String> {
 		match label {
 			"natural" => {
-				let network_desc = network_from_bytes(L1_SRGB_NATURAL_PARAMS)?;
+				let desc = network_from_bytes(L1_SRGB_NATURAL_PARAMS)?;
 				Ok(UpscalingNetwork {
-					graph: inference_sr_net(network_desc.factor as usize, network_desc.log_depth, network_desc.global_node_factor as usize).map_err(|e| e.to_string())?,
-					parameters: network_desc.parameters,
+					graph: inference_sr_net(
+						desc.factor as usize,
+						desc.width,
+						desc.log_depth,
+						desc.global_node_factor as usize,
+					).map_err(|e| e.to_string())?,
+					parameters: desc.parameters,
 					display: "neural net trained on natural images with an L1 loss".to_string(),
 				})
 			},
 			"anime" => {
-				let network_desc = network_from_bytes(L1_SRGB_ANIME_PARAMS)?;
+				let desc = network_from_bytes(L1_SRGB_ANIME_PARAMS)?;
 				Ok(UpscalingNetwork {
-					graph: inference_sr_net(network_desc.factor as usize, network_desc.log_depth, network_desc.global_node_factor as usize).map_err(|e| e.to_string())?,
-					parameters: network_desc.parameters,
+					graph: inference_sr_net(
+						desc.factor as usize,
+						desc.width,
+						desc.log_depth,
+						desc.global_node_factor as usize,
+					).map_err(|e| e.to_string())?,
+					parameters: desc.parameters,
 					display: "neural net trained on animation images with an L1 loss".to_string(),
 				})
 			},
-			"bilinear" => {
-				Ok(UpscalingNetwork {
-					graph: bilinear_net(bilinear_factor.unwrap_or(4)).map_err(|e| e.to_string())?,
-					parameters: Vec::new(),
-					display: "bilinear interpolation".to_string(),
-				})
-			},
+			"bilinear" => Ok(UpscalingNetwork {
+				graph: bilinear_net(bilinear_factor.unwrap_or(4)).map_err(|e| e.to_string())?,
+				parameters: Vec::new(),
+				display: "bilinear interpolation".to_string(),
+			}),
 			_ => Err(format!("Unsupported network type. Could not parse: {}", label)),
 		}
 	}
@@ -204,11 +248,11 @@ impl fmt::Display for UpscalingNetwork {
 	}
 }
 
-
-/// Takes an image tensor of shape [1, H, W, 3] and returns one of shape [1, H*factor, W*factor, 3], where factor is determined by the network definition.
-/// 
-/// The exact results of the upscaling depend on the content on which the network being used was trained, and what loss it was trained to minimise.
-/// L2 loss maximises PSNR, where as L1 loss results in sharper edges.
+/// Takes an image tensor of shape [1, H, W, 3] and returns one of shape [1, H*factor, W*factor, 3], where factor is
+/// determined by the network definition.
+///
+/// The exact results of the upscaling depend on the content on which the network being used was trained, and what loss
+/// it was trained to minimise. L2 loss maximises PSNR, where as L1 loss results in sharper edges.
 /// `bilinear_factor` is ignored unless the network is Bilinear.
 pub fn upscale(image: ArrayD<f32>, network: &UpscalingNetwork) -> alumina::graph::Result<ArrayD<f32>> {
 	let (graph, params) = network.borrow_network();
